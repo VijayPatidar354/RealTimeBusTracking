@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Driver — Live Tracking</title>
+  <link rel="stylesheet" href="/css/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <style>
+    .driver-panel {
+      width: 270px;
+      max-height: calc(100vh - 120px);
+      overflow-y: auto;
+    }
+    .panel-divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      margin: 10px 0;
+    }
+    .panel-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .stop-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .stop-row:last-child { border-bottom: none; }
+    .stop-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #555; flex-shrink: 0;
+    }
+    .stop-dot.next  { background: #f1c40f; box-shadow: 0 0 6px #f1c40f88; }
+    .stop-dot.later { background: #3498db; }
+    .stop-info { flex: 1; min-width: 0; }
+    .stop-info .sname {
+      font-size: 13px; color: #ddd;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .stop-info .sname.next-label { color: #f1c40f; font-weight: 600; }
+    .stop-badge {
+      font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 20px;
+      min-width: 28px; text-align: center; flex-shrink: 0;
+    }
+    .stop-badge.has-waiting { background:#e74c3c22; color:#e74c3c; border:1px solid #e74c3c55; }
+    .stop-badge.no-waiting  { background:#ffffff0f; color:#555;    border:1px solid #ffffff11; }
+
+    /* ── NEXT STOP BOX ─────────────────────────────────────── */
+    .next-stop-summary {
+      background: rgba(241,196,15,0.08);
+      border: 1px solid rgba(241,196,15,0.2);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .next-stop-summary .ns-label {
+      font-size: 11px; color: #f1c40f;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .next-stop-summary .ns-name  { font-size:15px; font-weight:700; color:#fff; margin:3px 0 2px; }
+    .next-stop-summary .ns-waiting { font-size:13px; color:#2ecc71; }
+
+    /* ── PROXIMITY INDICATOR ───────────────────────────────── */
+    .proximity-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    .prox-track {
+      flex: 1; height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px; overflow: hidden;
+    }
+    .prox-fill {
+      height: 100%; width: 0%;
+      background: #e74c3c;
+      border-radius: 2px;
+      transition: width 0.5s, background 0.5s;
+    }
+    .prox-fill.near   { background: #f1c40f; }
+    .prox-fill.inside { background: #2ecc71; }
+
+    /* ── ARRIVE BUTTON ─────────────────────────────────────── */
+    .arrive-btn {
+      width: 100%;
+      padding: 10px;
+      margin-top: 8px;
+      background: #2ecc71;
+      color: #1a1a2e;
+      font-weight: 700;
+      font-size: 13px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      letter-spacing: 0.3px;
+    }
+    .arrive-btn:disabled {
+      background: rgba(255,255,255,0.1);
+      color: #555;
+      cursor: not-allowed;
+    }
+    .arrive-btn.auto-trigger {
+      background: #f1c40f;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.7; }
+    }
+
+    /* ── GEOFENCE RADIUS NOTE ──────────────────────────────── */
+    .geo-note {
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    /* ── NO COORDS WARNING ─────────────────────────────────── */
+    .no-coords-note {
+      font-size: 11px;
+      color: #e67e22;
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: rgba(230,126,34,0.1);
+      border-radius: 6px;
+      border: 1px solid rgba(230,126,34,0.2);
+    }
+
+    /* ── TRIP COMPLETE ─────────────────────────────────────── */
+    .trip-complete {
+      text-align: center; padding: 14px;
+      background: rgba(46,204,113,0.1);
+      border: 1px solid rgba(46,204,113,0.3);
+      border-radius: 8px; color: #2ecc71;
+      font-size: 13px; font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <div class="topbar">
+      <h1>🚌 BusTracker — Driver View</h1>
+      <span class="badge badge-driver">DRIVER</span>
+    </div>
+
+    <div class="statusbar">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting...</span>
+      <span style="margin-left:auto;color:#f1c40f;font-size:12px" id="coordText"></span>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="driver-panel">
+
+      <!-- Identity -->
+      <h3 style="margin-bottom:10px">Your Info</h3>
+      <div class="info-row">
+        <span class="label">Driver</span>
+        <span class="value" id="infoName">—</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Bus</span>
+        <span class="value" id="infoBus">—</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Route</span>
+        <span class="value" id="infoRoute">—</span>
+      </div>
+
+      <hr class="panel-divider"/>
+
+      <!-- Next stop box with proximity + button -->
+      <div id="nextStopSummary" class="next-stop-summary" style="display:none">
+        <div class="ns-label">▶ Next Stop</div>
+        <div class="ns-name"    id="nsName">—</div>
+        <div class="ns-waiting" id="nsWaiting">— passengers waiting</div>
+
+        <!-- Proximity bar (only shown if stop has coordinates) -->
+        <div class="proximity-bar" id="proximityBar" style="display:none">
+          <span id="proxDist">—</span>
+          <div class="prox-track">
+            <div class="prox-fill" id="proxFill"></div>
+          </div>
+          <span id="proxStatus">—</span>
+        </div>
+
+        <!-- No coordinates note -->
+        <div class="no-coords-note" id="noCoordsNote" style="display:none">
+          ⚠ Stop has no GPS coordinates — use manual button
+        </div>
+
+        <!-- Arrive button -->
+        <button class="arrive-btn" id="arriveBtn" disabled onclick="manualArrive()">
+          Mark Arrived
+        </button>
+        <div class="geo-note" id="geoNote"></div>
+      </div>
+
+      <!-- Trip complete -->
+      <div id="tripCompleteBanner" class="trip-complete" style="display:none">
+        🏁 Trip Completed
+      </div>
+
+      <!-- Upcoming stops -->
+      <div id="upcomingSection" style="display:none">
+        <hr class="panel-divider"/>
+        <div class="panel-section-title">Upcoming Stops</div>
+        <div id="upcomingList"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+  <script src="/js/driver.js"></script>
+</body>
+</html>

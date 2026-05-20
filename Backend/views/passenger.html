@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Passenger — Live Bus Map</title>
+  <link rel="stylesheet" href="/css/style.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+</head>
+<body>
+  <div class="page">
+
+    <div class="topbar">
+      <h1>🗺️ BusTracker — Live Map</h1>
+      <span class="badge badge-passenger">PASSENGER</span>
+    </div>
+
+    <div class="statusbar">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting...</span>
+      <span style="margin-left:auto;font-size:12px;color:#aaa" id="busCountText"></span>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- Bus list sidebar -->
+    <div class="sidebar">
+      <h3>Live Buses</h3>
+      <div id="busList">
+        <div style="color:#666;font-size:13px">Waiting for buses...</div>
+      </div>
+    </div>
+
+    <!-- Stop list strip (bottom) -->
+    <div class="stop-list" id="stopList" style="display:none">
+      <h3 id="stopListTitle">Stops</h3>
+      <div id="stopListBody"></div>
+    </div>
+
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+  <script src="/js/passenger.js"></script>
+</body>
+</html>

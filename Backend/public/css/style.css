@@ -1,0 +1,218 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  font-family: 'Segoe UI', sans-serif;
+  background: #f0f2f5;
+}
+
+/* ── SHARED LAYOUT ─────────────────────────────── */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── TOPBAR ────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #1a1a2e;
+  color: #fff;
+  z-index: 1000;
+  flex-shrink: 0;
+}
+
+.topbar h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-driver   { background: #e74c3c; color: #fff; }
+.badge-passenger { background: #2ecc71; color: #fff; }
+
+/* ── STATUS BAR ────────────────────────────────── */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  background: #16213e;
+  color: #aaa;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e74c3c;
+  transition: background 0.3s;
+}
+
+.status-dot.connected { background: #2ecc71; }
+
+/* ── MAP ───────────────────────────────────────── */
+#map {
+  flex: 1;
+  width: 100%;
+  z-index: 1;
+}
+
+/* ── DRIVER PANEL ──────────────────────────────── */
+.driver-panel {
+  position: absolute;
+  top: 80px;
+  right: 16px;
+  z-index: 1000;
+  background: rgba(26, 26, 46, 0.95);
+  border-radius: 12px;
+  padding: 16px;
+  color: #fff;
+  width: 220px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.driver-panel h3 {
+  font-size: 13px;
+  color: #aaa;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.info-row:last-child { border-bottom: none; }
+.info-row .label     { color: #aaa; }
+.info-row .value     { color: #fff; font-weight: 500; }
+
+/* ── PASSENGER SIDEBAR ─────────────────────────── */
+.sidebar {
+  position: absolute;
+  top: 80px;
+  left: 16px;
+  z-index: 1000;
+  background: rgba(26, 26, 46, 0.95);
+  border-radius: 12px;
+  padding: 16px;
+  color: #fff;
+  width: 240px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.sidebar h3 {
+  font-size: 13px;
+  color: #aaa;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bus-card {
+  background: rgba(255,255,255,0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.bus-card:hover { background: rgba(255,255,255,0.13); }
+
+.bus-card .bus-number {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f1c40f;
+}
+
+.bus-card .bus-meta {
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 3px;
+}
+
+.bus-card .bus-location {
+  font-size: 11px;
+  color: #2ecc71;
+  margin-top: 4px;
+}
+
+/* ── STOP MODAL ────────────────────────────────── */
+.stop-list {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: rgba(26, 26, 46, 0.97);
+  border-radius: 12px;
+  padding: 14px 18px;
+  color: #fff;
+  min-width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+.stop-list h3 {
+  font-size: 13px;
+  color: #aaa;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.stop-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.stop-circle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3498db;
+  flex-shrink: 0;
+}
+
+.stop-circle.first { background: #2ecc71; }
+.stop-circle.last  { background: #e74c3c; }
+
+.stop-name {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.stop-connector {
+  width: 2px;
+  height: 14px;
+  background: rgba(255,255,255,0.2);
+  margin-left: 4px;
+}
