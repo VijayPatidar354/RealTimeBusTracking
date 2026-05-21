@@ -2,6 +2,7 @@ const pool   = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
 const { getIO } = require('../socket');
+const { checkAndProgressStop } = require('../services/autoStopService');
 
 const registerDriver = async (req, res) => {
     try {
@@ -147,6 +148,13 @@ const updateLocation = async (req, res) => {
                 longitude,
                 timestamp: new Date().toISOString()
             });
+
+            // ── AUTO STOP DETECTION ───────────────────────────────
+            // Runs asynchronously — does NOT block the HTTP response.
+            // Internally handles all guards (no bus, no route, no coords,
+            // duplicate pings, trip completed) and never throws.
+            checkAndProgressStop(driverId, latitude, longitude)
+                .catch(err => console.error('[AutoStop] Unexpected error:', err.message));
         }
 
         res.status(200).json({

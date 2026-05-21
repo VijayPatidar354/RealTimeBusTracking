@@ -75,30 +75,42 @@ socket.on('disconnect', () => {
 
 // ── REAL-TIME: bus location ───────────────────────────────────────
 socket.on('bus:location_updated', (data) => {
-  const { bus_id, bus_number, latitude, longitude, route_id } = data;
+  const { bus_number, route_id } = data;
+
+  // Normalise key and coordinates.
+  // bus_id from the socket is a JS number; object keys are always strings,
+  // but being explicit avoids any implicit-coercion mismatch with keys
+  // created during the initial REST load (where pg returns ints as numbers).
+  const bus_id = String(data.bus_id);
+  // parseFloat guarantees Leaflet always receives a true JS number even if
+  // the value arrives as a numeric string (pg NUMERIC columns over REST).
+  const lat = parseFloat(data.latitude);
+  const lng = parseFloat(data.longitude);
+
+  if (isNaN(lat) || isNaN(lng)) return; // malformed payload — skip silently
 
   if (busMarkers[bus_id]) {
-    // Smoothly move existing marker
-    busMarkers[bus_id].setLatLng([latitude, longitude]);
+    // ── Move existing marker ──────────────────────────────────────
+    busMarkers[bus_id].setLatLng([lat, lng]);
   } else {
-    // New bus appeared — create marker
+    // ── First event for this bus — create marker ──────────────────
     const color  = getRouteColor(route_id);
-    const marker = L.marker([latitude, longitude], { icon: makeBusIcon(bus_number, color) })
+    const marker = L.marker([lat, lng], { icon: makeBusIcon(bus_number, color) })
       .addTo(map)
       .bindPopup(buildPopup(busData[bus_id] || { bus_number, route_id }));
     busMarkers[bus_id] = marker;
   }
 
-  // Update stored data
+  // Keep busData in sync so flyToBus() always has fresh coordinates
   if (busData[bus_id]) {
-    busData[bus_id].latitude  = latitude;
-    busData[bus_id].longitude = longitude;
+    busData[bus_id].latitude  = lat;
+    busData[bus_id].longitude = lng;
   }
 
   // Update sidebar card location line
   const locationEl = document.getElementById(`bus-loc-${bus_id}`);
   if (locationEl) {
-    locationEl.textContent = `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    locationEl.textContent = `📍 ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
   }
 
   updateBusCount();
@@ -135,21 +147,27 @@ async function loadLiveBuses() {
     if (!data.success) return;
 
     data.buses.forEach(bus => {
-      busData[bus.bus_id] = bus;
+      // Normalise key to String — matches the socket handler's String(data.bus_id)
+      const busId = String(bus.bus_id);
+      busData[busId] = bus;
 
       const color = getRouteColor(bus.route_id);
 
-      // Place or update marker
+      // Place or update marker; parseFloat so Leaflet always gets a true number
       if (bus.latitude && bus.longitude) {
-        if (busMarkers[bus.bus_id]) {
-          busMarkers[bus.bus_id].setLatLng([bus.latitude, bus.longitude]);
-        } else {
-          busMarkers[bus.bus_id] = L.marker(
-            [bus.latitude, bus.longitude],
-            { icon: makeBusIcon(bus.bus_number, color) }
-          )
-          .addTo(map)
-          .bindPopup(buildPopup(bus));
+        const lat = parseFloat(bus.latitude);
+        const lng = parseFloat(bus.longitude);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          if (busMarkers[busId]) {
+            busMarkers[busId].setLatLng([lat, lng]);
+          } else {
+            busMarkers[busId] = L.marker(
+              [lat, lng],
+              { icon: makeBusIcon(bus.bus_number, color) }
+            )
+            .addTo(map)
+            .bindPopup(buildPopup(bus));
+          }
         }
       }
 
@@ -198,10 +216,10 @@ function renderSidebar(buses) {
 }
 
 function flyToBus(busId) {
-  const bus = busData[busId];
+  const bus = busData[String(busId)];
   if (bus && bus.latitude && bus.longitude) {
-    map.flyTo([bus.latitude, bus.longitude], 16, { duration: 1 });
-    if (busMarkers[busId]) busMarkers[busId].openPopup();
+    map.flyTo([parseFloat(bus.latitude), parseFloat(bus.longitude)], 16, { duration: 1 });
+    if (busMarkers[String(busId)]) busMarkers[String(busId)].openPopup();
     loadRouteStops(bus.route_id, bus.route_name);
   } else {
     showToast('📍 Location not yet available for this bus');
