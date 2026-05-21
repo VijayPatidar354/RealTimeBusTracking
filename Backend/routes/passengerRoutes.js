@@ -10,7 +10,8 @@ const {
     getBusesNearStop,
     getBusById,
     registerWaiting,
-    getWaitingCountsForRoute
+    getWaitingCountsForRoute,
+    getRouteETA
 } = require('../controllers/passengerController');
 
 const verifyPassenger = require('../middleware/passengerAuthMiddleware');
@@ -31,5 +32,8 @@ router.get('/buses/:id',           getBusById);
 // ── WAITING SYSTEM ────────────────────────────────────────────────
 router.post('/waiting',              verifyPassenger, registerWaiting);
 router.get('/routes/:id/waiting',    getWaitingCountsForRoute);
+
+// ── ETA (public) ──────────────────────────────────────────────────
+router.get('/routes/:routeId/eta',   getRouteETA);
 
 module.exports = router;

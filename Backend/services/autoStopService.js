@@ -43,8 +43,10 @@
 
 'use strict';
 
-const pool     = require('../config/db');
-const { getIO } = require('../socket');
+const pool                  = require('../config/db');
+const { getIO }             = require('../socket');
+const { haversineDistance }  = require('../utils/haversine');
+const { clearBusState }     = require('./etaService');
 
 // ── Configurable geofence radius (metres) ────────────────────────
 const GEOFENCE_RADIUS_METRES = parseInt(process.env.GEOFENCE_RADIUS || '50', 10);
@@ -55,23 +57,6 @@ const GEOFENCE_RADIUS_METRES = parseInt(process.env.GEOFENCE_RADIUS || '50', 10)
 // Scope : process lifetime; resets on server restart (acceptable —
 //         a restart implicitly clears all in-flight progressions).
 const triggeredStops = new Map();
-
-// ================================================================
-//  HAVERSINE DISTANCE
-//  Returns distance in METRES between two WGS-84 coordinates.
-//  Identical algorithm to the one in passengerController.js.
-// ================================================================
-function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R  = 6371000; // Earth radius in metres
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-    const a  = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-               Math.cos(φ1)   * Math.cos(φ2) *
-               Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 // ================================================================
 //  HELPER — fetchNextStopWithCoords
@@ -319,6 +304,7 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
         // ── 12. Trip completed branch ─────────────────────────────
         if (tripCompleted) {
             triggeredStops.delete(bus_id); // release — bus finished, no more stops
+            clearBusState(bus_id);         // clean up ETA speed history
 
             const tripCompletedPayload = {
                 event:         'trip:completed',

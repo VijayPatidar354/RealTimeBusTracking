@@ -20,9 +20,9 @@ const API            = '';
 const GEOFENCE_RADIUS = 50;    // metres — bus must be within 50m of stop
 
 // ── Token ─────────────────────────────────────────────────────────
-let token = localStorage.getItem('driver_token');
+let token = (localStorage.getItem('driver_token') || '').trim();
 if (!token) {
-  token = prompt('Paste your Driver JWT token:');
+  token = (prompt('Paste your Driver JWT token:') || '').trim();
   if (token) localStorage.setItem('driver_token', token);
 }
 if (!token) {
@@ -299,6 +299,7 @@ function renderPanel(stops) {
         <div class="stop-info">
           <div class="${isNext ? 'sname next-label' : 'sname'}">${stop.stop_name}</div>
         </div>
+        <span class="stop-eta" id="stop-eta-${stop.stop_order}"></span>
         <div class="${hasWaiting ? 'stop-badge has-waiting' : 'stop-badge no-waiting'}"
              id="stop-badge-${stop.stop_order}">
           ${stop.waiting_count}
@@ -308,14 +309,19 @@ function renderPanel(stops) {
   }).join('');
 
   document.getElementById('upcomingSection').style.display = 'block';
+
+  // Re-apply any existing ETA data to the newly rendered stops
+  applyDriverETAs();
 }
 
 function showTripComplete() {
   nextStopData = null;
+  driverETAStops = [];   // clear ETA data on trip completion
   removeStopVisuals();
   document.getElementById('nextStopSummary').style.display  = 'none';
   document.getElementById('upcomingSection').style.display  = 'none';
   document.getElementById('tripCompleteBanner').style.display = 'block';
+  document.getElementById('speedDisplay').style.display = 'none';
 }
 
 // ── Profile ───────────────────────────────────────────────────────
@@ -325,10 +331,31 @@ async function loadProfile() {
       headers: { Authorization: `Bearer ${token}` }
     });
     const data = await res.json();
-    if (!data.success) throw new Error(data.message);
+    if (!data.success) {
+      // Invalid token — clear it so next refresh prompts for a new one
+      if (res.status === 401) {
+        localStorage.removeItem('driver_token');
+        document.getElementById('statusText').textContent =
+          'Session expired — reload and paste a fresh token.';
+        return;
+      }
+      throw new Error(data.message);
+    }
     driverInfo = data.driver;
     document.getElementById('infoName').textContent = driverInfo.driver_name || '—';
     document.getElementById('infoBus').textContent  = driverInfo.bus_number  || 'Not assigned';
+
+    // ── Show persisted speed immediately on load ──────────────────
+    // Priority: realtime (eta-updated) → persisted DB → 30 km/h
+    // This ensures speed is NEVER blank after a page refresh.
+    const persistedSpeed = driverInfo.current_speed_kmph || 30;
+    const speedDisplay   = document.getElementById('speedDisplay');
+    const speedValue     = document.getElementById('speedValue');
+    if (speedDisplay && speedValue && persistedSpeed) {
+      speedValue.textContent = persistedSpeed;
+      speedDisplay.style.display = 'flex';
+    }
+
     socket.emit('join:driver', { driverId: driverInfo.id });
     loadAllWaiting();
   } catch (e) {
@@ -390,8 +417,49 @@ socket.on('trip:completed', () => {
 
 socket.on('bus:route_assigned', () => {
   autoTriggered = false;
+  driverETAStops = [];   // reset ETA on route reassignment
   loadAllWaiting();
 });
+
+// ── ETA STATE & HANDLER ──────────────────────────────────────────
+let driverETAStops = [];   // upcoming_stops from eta-updated event
+
+socket.on('eta-updated', (data) => {
+  driverETAStops = data.upcoming_stops || [];
+
+  // ── Update speed display ──────────────────────────────────────
+  const speedDisplay = document.getElementById('speedDisplay');
+  const speedValue   = document.getElementById('speedValue');
+  if (speedDisplay && speedValue) {
+    speedValue.textContent = data.current_speed_kmph || 0;
+    speedDisplay.style.display = 'flex';
+  }
+
+  // ── Update next stop ETA in summary box ────────────────────────
+  if (nextStopData && data.upcoming_stops) {
+    const nextETA = data.upcoming_stops.find(s => s.stop_order === nextStopData.stop_order);
+    if (nextETA) {
+      const etaLabel = document.getElementById('nsETA');
+      if (etaLabel) {
+        etaLabel.textContent = `⏱ ${nextETA.eta_minutes} min`;
+        etaLabel.style.display = 'inline';
+      }
+    }
+  }
+
+  // ── Update ETA labels beside each stop ─────────────────────────
+  applyDriverETAs();
+});
+
+// Helper: apply ETA labels to rendered stop rows
+function applyDriverETAs() {
+  for (const stop of driverETAStops) {
+    const etaEl = document.getElementById(`stop-eta-${stop.stop_order}`);
+    if (etaEl) {
+      etaEl.textContent = `⏱ ${stop.eta_minutes} min`;
+    }
+  }
+}
 
 // ================================================================
 //  GPS WATCH — sends location to server + runs geofence check

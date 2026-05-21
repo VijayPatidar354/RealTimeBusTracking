@@ -138,6 +138,51 @@ socket.on('bus:route_assigned', (data) => {
   loadLiveBuses();
 });
 
+// ── ETA STATE ─────────────────────────────────────────────────────
+const etaData = {};   // route_id → { current_speed_kmph, upcoming_stops[] }
+
+// ── REAL-TIME: ETA updated ────────────────────────────────────────
+socket.on('eta-updated', (data) => {
+  etaData[data.route_id] = {
+    bus_id:             data.bus_id,
+    current_speed_kmph: data.current_speed_kmph,
+    upcoming_stops:     data.upcoming_stops || []
+  };
+
+  // Update speed in sidebar card if visible
+  const speedEl = document.getElementById(`bus-speed-${data.bus_id}`);
+  if (speedEl) {
+    speedEl.textContent = `⚡ ${data.current_speed_kmph} km/h`;
+  }
+
+  // Update stop strip if this route's stops are currently shown
+  const currentRouteTitle = document.getElementById('stopListTitle').textContent;
+  // Re-apply ETA badges to the currently displayed stop strip
+  applyETABadges(data.route_id);
+});
+
+// Helper: classify ETA for color coding
+function etaClass(minutes) {
+  if (minutes <= 5)  return 'soon';
+  if (minutes <= 15) return 'moderate';
+  return 'far';
+}
+
+// Helper: apply ETA badges to the currently displayed stop strip
+function applyETABadges(routeId) {
+  const eta = etaData[routeId];
+  if (!eta || !eta.upcoming_stops) return;
+
+  for (const stop of eta.upcoming_stops) {
+    const badgeEl = document.getElementById(`eta-${routeId}-${stop.stop_order}`);
+    if (badgeEl) {
+      const cls = etaClass(stop.eta_minutes);
+      badgeEl.className = `eta-badge ${cls}`;
+      badgeEl.textContent = `⏱ ${stop.eta_minutes} min`;
+    }
+  }
+}
+
 // ── Load all live buses ───────────────────────────────────────────
 async function loadLiveBuses() {
   try {
@@ -210,6 +255,10 @@ function renderSidebar(buses) {
             ? `📍 ${Number(bus.latitude).toFixed(5)}, ${Number(bus.longitude).toFixed(5)}`
             : '📍 Location not yet available'}
         </div>
+        <div style="font-size:11px;color:#3498db;margin-top:2px"
+     id="bus-speed-${bus.bus_id}">
+     ⚡ ${Math.round(bus.current_speed_kmph || 30)} km/h
+</div>
       </div>
     `;
   }).join('');
@@ -227,12 +276,15 @@ function flyToBus(busId) {
 }
 
 // ── Stop strip (bottom bar) ───────────────────────────────────────
+let currentStopRouteId = null;  // track which route's stops are displayed
+
 async function loadRouteStops(routeId, routeName) {
   try {
     const res  = await fetch(`${API}/api/passenger/routes/${routeId}`);
     const data = await res.json();
     if (!data.success) return;
 
+    currentStopRouteId = routeId;
     const stops = data.route.stops;
     document.getElementById('stopListTitle').textContent = routeName || 'Stops';
 
@@ -246,6 +298,7 @@ async function loadRouteStops(routeId, routeName) {
           <div class="stop-track">
             <div class="stop-circle ${cls}"></div>
             <span class="stop-name">${stop.stop_name}</span>
+            <span class="eta-badge far" id="eta-${routeId}-${stop.stop_order}" style="margin-left:6px"></span>
           </div>
           ${connector}
         </div>
@@ -255,8 +308,38 @@ async function loadRouteStops(routeId, routeName) {
     document.getElementById('stopListBody').innerHTML = body;
     document.getElementById('stopList').style.display = 'block';
 
+    // Fetch initial ETA for this route
+    awaitfetchRouteETA(routeId);
+
   } catch (e) {
     console.error('Failed to load stops:', e);
+  }
+}
+
+// ── Fetch initial ETA from REST API ───────────────────────────────
+async function fetchRouteETA(routeId) {
+  try {
+    const res  = await fetch(`${API}/api/passenger/routes/${routeId}/eta`);
+    const data = await res.json();
+    if (!data.success || !data.upcoming_stops) return;
+
+    etaData[routeId] = {
+      bus_id:             data.bus_id,
+      current_speed_kmph: data.current_speed_kmph,
+      upcoming_stops:     data.upcoming_stops
+    };
+
+    applyETABadges(routeId);
+
+    // Update speed display in sidebar
+    if (data.bus_id && data.current_speed_kmph !== null) {
+      const speedEl = document.getElementById(`bus-speed-${data.bus_id}`);
+      if (speedEl) {
+        speedEl.textContent = `⚡ ${data.current_speed_kmph} km/h`;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch ETA:', e);
   }
 }
 

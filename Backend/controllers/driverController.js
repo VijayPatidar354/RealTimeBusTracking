@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
 const { getIO } = require('../socket');
 const { checkAndProgressStop } = require('../services/autoStopService');
+const etaService = require('../services/etaService');
 
 const registerDriver = async (req, res) => {
     try {
@@ -66,7 +67,8 @@ const getDriverProfile = async (req, res) => {
             SELECT
                 d.id, d.driver_name, d.phone, d.license_number,
                 d.latitude, d.longitude,
-                b.bus_number, b.bus_type
+                b.bus_number, b.bus_type,
+                COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph
             FROM drivers d
             LEFT JOIN buses b ON d.id = b.driver_id
             WHERE d.id = $1
@@ -155,6 +157,13 @@ const updateLocation = async (req, res) => {
             // duplicate pings, trip completed) and never throws.
             checkAndProgressStop(driverId, latitude, longitude)
                 .catch(err => console.error('[AutoStop] Unexpected error:', err.message));
+
+            // ── ETA UPDATE ─────────────────────────────────────────────
+            // Record GPS for speed calculation, then emit throttled
+            // ETA updates. Non-blocking — does NOT affect response.
+            etaService.recordGPSUpdate(bus.bus_id, latitude, longitude, Date.now());
+            etaService.emitETAUpdate(bus.bus_id, bus.route_id, driverId)
+                .catch(err => console.error('[ETA] Unexpected error:', err.message));
         }
 
         res.status(200).json({

@@ -181,6 +181,15 @@
         <span class="value" id="infoRoute">—</span>
       </div>
 
+      <!-- Speed indicator -->
+      <div class="speed-display" id="speedDisplay" style="display:none;margin-top:8px">
+        <div>
+          <span class="speed-value" id="speedValue">0</span>
+          <span class="speed-unit">km/h</span>
+        </div>
+        <span class="speed-label">Estimated Speed</span>
+      </div>
+
       <hr class="panel-divider"/>
 
       <!-- Next stop box with proximity + button -->
@@ -188,6 +197,7 @@
         <div class="ns-label">▶ Next Stop</div>
         <div class="ns-name"    id="nsName">—</div>
         <div class="ns-waiting" id="nsWaiting">— passengers waiting</div>
+        <span class="eta-badge moderate" id="nsETA" style="display:none;margin-top:4px"></span>
 
         <!-- Proximity bar (only shown if stop has coordinates) -->
         <div class="proximity-bar" id="proximityBar" style="display:none">

@@ -216,3 +216,82 @@ html, body {
   background: rgba(255,255,255,0.2);
   margin-left: 4px;
 }
+
+/* ── ETA BADGES (Passenger & Driver) ────────── */
+.eta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  animation: etaFadeIn 0.4s ease;
+}
+
+.eta-badge.soon {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  border: 1px solid rgba(46, 204, 113, 0.3);
+}
+
+.eta-badge.moderate {
+  background: rgba(241, 196, 15, 0.15);
+  color: #f1c40f;
+  border: 1px solid rgba(241, 196, 15, 0.3);
+}
+
+.eta-badge.far {
+  background: rgba(255, 255, 255, 0.08);
+  color: #888;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+@keyframes etaFadeIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── SPEED INDICATOR (Driver panel) ─────────── */
+.speed-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(52, 152, 219, 0.1);
+  border: 1px solid rgba(52, 152, 219, 0.25);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.speed-display .speed-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #3498db;
+  line-height: 1;
+}
+
+.speed-display .speed-unit {
+  font-size: 11px;
+  color: #3498db;
+  opacity: 0.7;
+}
+
+.speed-display .speed-label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ── ETA in stop row (Driver panel) ──────────── */
+.stop-eta {
+  font-size: 11px;
+  color: #3498db;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 6px;
+}

@@ -1,25 +1,9 @@
-const pool   = require('../config/db');
-const bcrypt = require('bcryptjs');
-const jwt    = require('jsonwebtoken');
-const { getIO } = require('../socket');
-
-// ================================================================
-//  HAVERSINE DISTANCE — server-side geofence calculation
-//  Returns distance in METRES between two lat/lon coordinates.
-//  Used in markStopReached to validate bus is at the stop.
-//  This runs on the server — cannot be bypassed by the client.
-// ================================================================
-function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R  = 6371000; // Earth radius in metres
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
-    const a  = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-               Math.cos(φ1) * Math.cos(φ2) *
-               Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+const pool                  = require('../config/db');
+const bcrypt                = require('bcryptjs');
+const jwt                   = require('jsonwebtoken');
+const { getIO }             = require('../socket');
+const { haversineDistance }  = require('../utils/haversine');
+const etaService             = require('../services/etaService');
 
 // ================================================================
 //  SHARED HELPER — getNextStopInfo
@@ -734,12 +718,88 @@ const markStopReached = async (req, res) => {
     }
 };
 
+// ================================================================
+//  PASSENGER: GET REALTIME ETA FOR A ROUTE
+//  GET /api/passenger/routes/:routeId/eta
+//  Public — no auth required
+//
+//  Returns realtime ETA predictions for upcoming stops based on
+//  actual bus movement speed. Falls back to default speed when
+//  no realtime data is available.
+// ================================================================
+const getRouteETA = async (req, res) => {
+    try {
+        const { routeId } = req.params;
+
+        // Validate route exists
+        const routeCheck = await pool.query(
+            `SELECT id, route_name FROM routes WHERE id = $1`, [routeId]
+        );
+        if (routeCheck.rows.length === 0) {
+            return res.status(404).json({ success: false, message: 'Route not found' });
+        }
+
+        // Find active bus on this route (with driver who has GPS coordinates)
+        const busResult = await pool.query(
+            `SELECT b.id AS bus_id, b.route_id, b.current_stop_order,
+                    COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph,
+                    d.id AS driver_id, d.latitude, d.longitude
+             FROM   buses b
+             JOIN   drivers d ON b.driver_id = d.id
+             WHERE  b.route_id = $1
+               AND  d.latitude IS NOT NULL
+               AND  d.longitude IS NOT NULL
+             ORDER BY b.id ASC
+             LIMIT  1`,
+            [routeId]
+        );
+
+        if (busResult.rows.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: 'No active bus with GPS on this route',
+                route_id: parseInt(routeId),
+                bus_id: null,
+                current_location: null,
+                current_speed_kmph: null,
+                upcoming_stops: []
+            });
+        }
+
+        const bus = busResult.rows[0];
+        const payload = await etaService.generateETAPayload(bus.bus_id, bus.route_id);
+
+        if (!payload) {
+            return res.status(200).json({
+                success: true,
+                message: 'ETA data not yet available',
+                route_id: parseInt(routeId),
+                bus_id: bus.bus_id,
+                current_location: null,
+                current_speed_kmph: null,
+                upcoming_stops: []
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            route_id: payload.route_id,
+            bus_id: payload.bus_id,
+            current_location: payload.current_location,
+            current_speed_kmph: payload.current_speed_kmph,
+            upcoming_stops: payload.upcoming_stops
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     registerPassenger, loginPassenger,
     getAllRoutes, getRouteById,
     getLiveBuses, getBusesNearStop, getBusById,
     registerWaiting, getWaitingCountsForRoute,
-    driverGetWaitingCounts, driverGetAllWaiting, markStopReached
+    driverGetWaitingCounts, driverGetAllWaiting, markStopReached,
+    getRouteETA
 };
-
-
