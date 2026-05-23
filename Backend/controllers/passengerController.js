@@ -5,6 +5,7 @@ const { getIO }             = require('../socket');
 const { haversineDistance }  = require('../utils/haversine');
 const etaService             = require('../services/etaService');
 
+
 // ================================================================
 //  SHARED HELPER — getNextStopInfo
 //  Fetches next stop + waiting count for a given bus.
@@ -795,11 +796,232 @@ const getRouteETA = async (req, res) => {
     }
 };
 
+// ================================================================
+//  SEARCH ROUTE
+//  GET /api/passenger/search-route?from=NIT&to=Airport
+//  Public — no auth required
+//
+//  Finds routes that contain BOTH a source stop and a destination
+//  stop, where the source appears BEFORE the destination
+//  (source.stop_order < destination.stop_order).
+//
+//  For each matching route, returns:
+//   - Active buses with GPS + persisted speed
+//   - Realtime ETA using the existing adaptive ETA engine
+//   - Only the stops between source and destination (inclusive)
+//   - The nearest arriving bus (lowest ETA) highlighted first
+//
+//  FUTURE EXTENSION POINTS (no refactoring needed):
+//   - Add nearest-stop detection by passing passenger GPS coords
+//   - Add traffic-aware ETA by replacing etaService.generateETAPayload
+//   - Add multi-bus comparison by returning all buses, not just nearest
+//   - Add route interchange suggestions by querying shared stops
+// ================================================================
+const searchRoute = async (req, res) => {
+    try {
+        const from = (req.query.from || '').trim();
+        const to   = (req.query.to   || '').trim();
+
+        if (!from || !to) {
+            return res.status(400).json({
+                success: false,
+                message: 'Both "from" and "to" query parameters are required'
+            });
+        }
+
+        // ── Step 1: Find routes with both stops in correct order ──────
+        // Uses a self-join on stops to find routes where:
+        //   - A stop name ILIKE from (case-insensitive partial match)
+        //   - A stop name ILIKE to
+        //   - source.stop_order < destination.stop_order
+        // Single query — no N+1 loops.
+        const routeResult = await pool.query(
+            `SELECT DISTINCT
+                r.id           AS route_id,
+                r.route_name,
+                src.stop_name  AS source_stop,
+                src.stop_order AS source_order,
+                dst.stop_name  AS destination_stop,
+                dst.stop_order AS destination_order
+             FROM routes r
+             JOIN stops src ON src.route_id = r.id
+             JOIN stops dst ON dst.route_id = r.id
+             WHERE src.stop_name ILIKE $1
+               AND dst.stop_name ILIKE $2
+               AND src.stop_order < dst.stop_order
+             ORDER BY r.id ASC`,
+            [`%${from}%`, `%${to}%`]
+        );
+
+        if (routeResult.rows.length === 0) {
+            return res.status(200).json({
+                success: true,
+                from,
+                to,
+                message: 'No routes found matching this source and destination',
+                routes: []
+            });
+        }
+
+        const routes = [];
+
+        for (const route of routeResult.rows) {
+            // ── Step 2: Get active buses with GPS for this route ──────
+            const busResult = await pool.query(
+                `SELECT b.id AS bus_id, b.bus_number, b.bus_type,
+                        b.current_stop_order,
+                        COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph,
+                        d.id AS driver_id, d.latitude, d.longitude
+                 FROM   buses b
+                 JOIN   drivers d ON b.driver_id = d.id
+                 WHERE  b.route_id = $1
+                   AND  d.latitude  IS NOT NULL
+                   AND  d.longitude IS NOT NULL
+                 ORDER BY b.id ASC`,
+                [route.route_id]
+            );
+
+            // ── Step 3: Get stops between source and destination ──────
+            const stopsResult = await pool.query(
+                `SELECT stop_name, stop_order
+                 FROM   stops
+                 WHERE  route_id   = $1
+                   AND  stop_order >= $2
+                   AND  stop_order <= $3
+                 ORDER BY stop_order ASC`,
+                [route.route_id, route.source_order, route.destination_order]
+            );
+            const segmentStops = stopsResult.rows.map(s => s.stop_name);
+
+            // ── Step 4: Compute ETA for each bus using existing service
+            const busesWithETA = [];
+
+            for (const bus of busResult.rows) {
+                // Reuse etaService — respects realtime speed → persisted → default
+                // ----------------------------------------------------
+                // REAL ETA TO SOURCE STOP
+                // ----------------------------------------------------
+                
+                const sourceETA =
+                    await etaService.calculateETAForSingleStop({
+                
+                        routeId:
+                            route.route_id,
+                
+                        busLatitude:
+                            parseFloat(bus.latitude),
+                
+                        busLongitude:
+                            parseFloat(bus.longitude),
+                
+                        targetStopOrder:
+                            route.source_order
+                    });
+                
+                // ----------------------------------------------------
+                // REAL ETA TO DESTINATION STOP
+                // ----------------------------------------------------
+                
+                const destinationETA =
+                    await etaService.calculateETAForSingleStop({
+                
+                        routeId:
+                            route.route_id,
+                
+                        busLatitude:
+                            parseFloat(bus.latitude),
+                
+                        busLongitude:
+                            parseFloat(bus.longitude),
+                
+                        targetStopOrder:
+                            route.destination_order
+                    });
+                
+                busesWithETA.push({
+                
+                    bus_id:
+                        bus.bus_id,
+                
+                    bus_number:
+                        bus.bus_number,
+                
+                    bus_type:
+                        bus.bus_type,
+                
+                    current_speed_kmph:
+                        bus.current_speed_kmph,
+                
+                    current_location: {
+                
+                        latitude:
+                            parseFloat(bus.latitude),
+                
+                        longitude:
+                            parseFloat(bus.longitude)
+                    },
+                
+                    eta_to_source_minutes:
+                        sourceETA.eta_minutes,
+                
+                    eta_to_destination_minutes:
+                        destinationETA.eta_minutes
+                });
+               
+            }
+
+            // ── Step 5: Sort buses — nearest to SOURCE first ──────────
+            // Buses that haven't reached source yet (null ETA) go last
+            busesWithETA.sort((a, b) => {
+                if (a.eta_to_source_minutes === null) return 1;
+                if (b.eta_to_source_minutes === null) return -1;
+                return a.eta_to_source_minutes - b.eta_to_source_minutes;
+            });
+
+            // Nearest bus is the first one
+            const nearestBus = busesWithETA[0] || null;
+
+            routes.push({
+                route_id:          route.route_id,
+                route_name:        route.route_name,
+                source_stop:       route.source_stop,
+                destination_stop:  route.destination_stop,
+                nearest_bus:       nearestBus,
+                all_buses:         busesWithETA,
+                eta_minutes:       nearestBus ? nearestBus.eta_to_source_minutes : null,
+                upcoming_stops:    segmentStops
+            });
+        }
+
+        // Sort routes — those with an active bus first, then by ETA
+        routes.sort((a, b) => {
+            if (!a.nearest_bus && b.nearest_bus) return 1;
+            if (a.nearest_bus && !b.nearest_bus) return -1;
+            if (!a.eta_minutes && b.eta_minutes) return 1;
+            if (a.eta_minutes && !b.eta_minutes) return -1;
+            return (a.eta_minutes || 999) - (b.eta_minutes || 999);
+        });
+
+        res.status(200).json({
+            success: true,
+            from,
+            to,
+            total: routes.length,
+            routes
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+
 module.exports = {
     registerPassenger, loginPassenger,
     getAllRoutes, getRouteById,
     getLiveBuses, getBusesNearStop, getBusById,
     registerWaiting, getWaitingCountsForRoute,
     driverGetWaitingCounts, driverGetAllWaiting, markStopReached,
-    getRouteETA
+    getRouteETA,
+    searchRoute
 };

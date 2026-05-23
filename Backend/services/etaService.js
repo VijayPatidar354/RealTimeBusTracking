@@ -425,6 +425,95 @@ function clearBusState(busId) {
     busState.delete(busId);
 }
 
+// ================================================================
+// CALCULATE ETA FOR A SINGLE TARGET STOP
+// Used by route search system
+// ================================================================
+
+async function calculateETAForSingleStop({
+    routeId,
+    busLatitude,
+    busLongitude,
+    targetStopOrder
+}) {
+
+    const stopsResult = await pool.query(
+        `
+        SELECT
+            stop_name,
+            stop_order,
+            stop_lat,
+            stop_lon
+
+        FROM stops
+
+        WHERE
+              route_id = $1
+          AND stop_order <= $2
+
+        ORDER BY stop_order ASC
+        `,
+        [routeId, targetStopOrder]
+    );
+
+    const stops = stopsResult.rows;
+
+    if (!stops.length) {
+        return {
+            eta_minutes: 999,
+            distance_metres: 0
+        };
+    }
+
+    let totalDistance = 0;
+
+    // ------------------------------------------------------------
+    // BUS → FIRST STOP
+    // ------------------------------------------------------------
+
+    totalDistance += haversineDistance(
+        parseFloat(busLatitude),
+        parseFloat(busLongitude),
+
+        parseFloat(stops[0].stop_lat),
+        parseFloat(stops[0].stop_lon)
+    );
+
+    // ------------------------------------------------------------
+    // CUMULATIVE STOP DISTANCE
+    // ------------------------------------------------------------
+
+    for (let i = 0; i < stops.length - 1; i++) {
+
+        totalDistance += haversineDistance(
+
+            parseFloat(stops[i].stop_lat),
+            parseFloat(stops[i].stop_lon),
+
+            parseFloat(stops[i + 1].stop_lat),
+            parseFloat(stops[i + 1].stop_lon)
+        );
+    }
+
+    // ------------------------------------------------------------
+    // SPEED
+    // ------------------------------------------------------------
+
+    const AVG_BUS_SPEED_MPS = 8.33; // 30 km/h
+
+    const etaSeconds =
+        totalDistance / AVG_BUS_SPEED_MPS;
+
+    return {
+
+        eta_minutes:
+            Math.max(1, Math.ceil(etaSeconds / 60)),
+
+        distance_metres:
+            Math.round(totalDistance)
+    };
+}
+
 module.exports = {
     recordGPSUpdate,
     getSmoothedSpeed,
@@ -433,5 +522,6 @@ module.exports = {
     calculateUpcomingETAsWithSpeed,
     generateETAPayload,
     emitETAUpdate,
-    clearBusState
+    clearBusState,
+    calculateETAForSingleStop
 };

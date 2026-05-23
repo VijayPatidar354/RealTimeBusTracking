@@ -11,7 +11,8 @@ const {
     getBusById,
     registerWaiting,
     getWaitingCountsForRoute,
-    getRouteETA
+    getRouteETA,
+    searchRoute
 } = require('../controllers/passengerController');
 
 const verifyPassenger = require('../middleware/passengerAuthMiddleware');
@@ -35,5 +36,7 @@ router.get('/routes/:id/waiting',    getWaitingCountsForRoute);
 
 // ── ETA (public) ──────────────────────────────────────────────────
 router.get('/routes/:routeId/eta',   getRouteETA);
+router.get('/search-route', searchRoute);
+
 
 module.exports = router;

@@ -309,7 +309,7 @@ async function loadRouteStops(routeId, routeName) {
     document.getElementById('stopList').style.display = 'block';
 
     // Fetch initial ETA for this route
-    awaitfetchRouteETA(routeId);
+    await fetchRouteETA(routeId);
 
   } catch (e) {
     console.error('Failed to load stops:', e);
