@@ -177,10 +177,63 @@ const updateLocation = async (req, res) => {
     }
 };
 
+const getRouteStops = async (req, res) => {
+    try {
+        const driverId = req.driver.id;
+
+        // Get bus + route for this driver
+        const busResult = await pool.query(
+            `SELECT b.id AS bus_id, b.route_id, b.current_stop_order,
+                    r.route_name, r.source, r.destination
+             FROM buses b
+             LEFT JOIN routes r ON b.route_id = r.id
+             WHERE b.driver_id = $1 LIMIT 1`,
+            [driverId]
+        );
+
+        if (busResult.rows.length === 0 || !busResult.rows[0].route_id) {
+            return res.status(404).json({
+                success: false,
+                message: 'No bus or route assigned to you'
+            });
+        }
+
+        const { route_id, current_stop_order, route_name, source, destination } = busResult.rows[0];
+
+        // Fetch ALL stops on route ordered by stop_order
+        const stopsResult = await pool.query(
+            `SELECT
+                id          AS stop_id,
+                stop_name,
+                stop_order,
+                stop_lat,
+                stop_lon
+             FROM stops
+             WHERE route_id = $1
+             ORDER BY stop_order ASC`,
+            [route_id]
+        );
+
+        res.status(200).json({
+            success:            true,
+            route_id,
+            route_name,
+            source,
+            destination,
+            current_stop_order,
+            stops:              stopsResult.rows
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     registerDriver,
     getDrivers,
     loginDriver,
     getDriverProfile,
-    updateLocation
+    updateLocation,
+    getRouteStops,
 };

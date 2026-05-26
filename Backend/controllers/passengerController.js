@@ -610,21 +610,34 @@ const markStopReached = async (req, res) => {
         }
         // ── END GEOFENCE VALIDATION ───────────────────────────────
 
-        // Clear waiting entries
-        const deleted = await pool.query(
-            `DELETE FROM passenger_waiting WHERE stop_id = $1 AND route_id = $2`,
+        // ── Stamp bus_arrived_at on all waiting entries for this stop ──────────
+        // Do NOT delete — passengers must confirm they boarded via POST /waiting/:id/board.
+        // Entries without a board confirmation auto-expire after 5 minutes (autoExpireWaiting job).
+        await pool.query(
+            `UPDATE passenger_waiting
+             SET bus_arrived_at = NOW()
+             WHERE stop_id = $1 AND route_id = $2 AND bus_arrived_at IS NULL`,
             [stop_id, route_id]
         );
 
-        // ── Emit waiting:updated with count=0 so passenger UI resets immediately ──
+        // Fetch current waiting count (unchanged — passengers still in list until they confirm board)
+        const waitingAfterArrival = await pool.query(
+            `SELECT COUNT(id)::INTEGER AS total_waiting
+             FROM passenger_waiting WHERE stop_id = $1 AND route_id = $2`,
+            [stop_id, route_id]
+        );
+        const currentWaiting = waitingAfterArrival.rows[0].total_waiting;
+
+        // ── Emit waiting:updated so passenger UI shows the "Did you board?" prompt ──
         getIO().to(`route:${route_id}`).emit('waiting:updated', {
-            event:         'waiting:updated',
-            route_id:      parseInt(route_id),
-            stop_id:       parseInt(stop_id),
-            stop_name:     reachedStop.stop_name,
-            stop_order:    reachedStop.stop_order,
-            total_waiting: 0,
-            timestamp:     new Date().toISOString()
+            event:          'waiting:updated',
+            route_id:       parseInt(route_id),
+            stop_id:        parseInt(stop_id),
+            stop_name:      reachedStop.stop_name,
+            stop_order:     reachedStop.stop_order,
+            total_waiting:  currentWaiting,
+            bus_arrived:    true,
+            timestamp:      new Date().toISOString()
         });
 
         // Check last stop
@@ -643,13 +656,12 @@ const markStopReached = async (req, res) => {
 
         // ── Emit: stop:reached ────────────────────────────────────
         const stopReachedPayload = {
-            event:            'stop:reached',
+            event:      'stop:reached',
             bus_id, route_id,
-            stop_id:          parseInt(stop_id),
-            stop_name:        reachedStop.stop_name,
-            stop_order:       reachedStop.stop_order,
-            passengers_reset: deleted.rowCount,
-            timestamp:        new Date().toISOString()
+            stop_id:    parseInt(stop_id),
+            stop_name:  reachedStop.stop_name,
+            stop_order: reachedStop.stop_order,
+            timestamp:  new Date().toISOString()
         };
         getIO().to(`route:${route_id}`).emit('stop:reached',  stopReachedPayload);
         getIO().to(`driver:${driverId}`).emit('stop:reached', stopReachedPayload);
@@ -689,14 +701,13 @@ const markStopReached = async (req, res) => {
             getIO().to('admin').emit('route-waiting-updated',               routeWaitingPayload);
 
             return res.status(200).json({
-                success:          true,
-                message:          `Reached "${reachedStop.stop_name}" — progressing to next stop`,
-                passengers_reset: deleted.rowCount,
-                reached_stop:     reachedStop.stop_name,
-                next_stop:        nextStop ? nextStop.next_stop_name  : null,
-                next_stop_order:  nextStop ? nextStop.next_stop_order : null,
-                waiting_count:    nextStop ? nextStop.waiting_count   : 0,
-                upcoming_stops:   upcomingStops
+                success:         true,
+                message:         `Reached "${reachedStop.stop_name}" — progressing to next stop`,
+                reached_stop:    reachedStop.stop_name,
+                next_stop:       nextStop ? nextStop.next_stop_name  : null,
+                next_stop_order: nextStop ? nextStop.next_stop_order : null,
+                waiting_count:   nextStop ? nextStop.waiting_count   : 0,
+                upcoming_stops:  upcomingStops
             });
         }
 
@@ -708,10 +719,9 @@ const markStopReached = async (req, res) => {
         });
 
         res.status(200).json({
-            success:          true,
-            message:          `Reached final stop "${reachedStop.stop_name}" — trip completed`,
-            passengers_reset: deleted.rowCount,
-            trip_status:      'completed'
+            success:     true,
+            message:     `Reached final stop "${reachedStop.stop_name}" — trip completed`,
+            trip_status: 'completed'
         });
 
     } catch (error) {
@@ -1016,12 +1026,313 @@ const searchRoute = async (req, res) => {
 };
 
 
+// ================================================================
+//  PASSENGER: CONFIRM BOARDED
+//  POST /api/passenger/waiting/:id/board
+//  Protected: verifyPassenger
+//
+//  Called when passenger taps "Yes, I boarded" on the prompt
+//  shown after receiving stop:reached for their stop.
+//
+//  Deletes only THIS passenger's waiting row, then emits the
+//  updated count to all buses on that route so every driver's
+//  panel reflects the real remaining count.
+// ================================================================
+const boardBus = async (req, res) => {
+    try {
+        const passengerId  = req.passenger.passengerId;
+        const { id }       = req.params;   // passenger_waiting.id
+
+        // Fetch the row first — need route_id + stop_id for the emit
+        const rowResult = await pool.query(
+            `SELECT pw.id, pw.stop_id, pw.route_id, s.stop_name, s.stop_order
+             FROM   passenger_waiting pw
+             JOIN   stops s ON s.id = pw.stop_id
+             WHERE  pw.id = $1 AND pw.passenger_id = $2`,
+            [id, passengerId]
+        );
+
+        if (rowResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Waiting entry not found or does not belong to you'
+            });
+        }
+
+        const row = rowResult.rows[0];
+
+        // Delete this passenger's row only
+        await pool.query(
+            `DELETE FROM passenger_waiting WHERE id = $1`,
+            [id]
+        );
+
+        // New count after deletion
+        const countResult = await pool.query(
+            `SELECT COUNT(id)::INTEGER AS total_waiting
+             FROM passenger_waiting WHERE stop_id = $1 AND route_id = $2`,
+            [row.stop_id, row.route_id]
+        );
+        const totalWaiting = countResult.rows[0].total_waiting;
+
+        // Emit updated count to all passengers on this route
+        const waitingPayload = {
+            event:         'waiting:updated',
+            route_id:      row.route_id,
+            stop_id:       row.stop_id,
+            stop_name:     row.stop_name,
+            stop_order:    row.stop_order,
+            total_waiting: totalWaiting,
+            timestamp:     new Date().toISOString()
+        };
+        getIO().to(`route:${row.route_id}`).emit('waiting:updated', waitingPayload);
+
+        // Emit updated waiting panel to every active driver on this route
+        const busesOnRoute = await pool.query(
+            `SELECT driver_id, id AS bus_id, current_stop_order
+             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+            [row.route_id]
+        );
+
+        for (const bus of busesOnRoute.rows) {
+            // next-stop-updated — only if this stop is their next stop
+            if (bus.current_stop_order === row.stop_order) {
+                getIO().to(`driver:${bus.driver_id}`).emit('next-stop-updated', {
+                    event:           'next-stop-updated',
+                    route_id:        row.route_id,
+                    next_stop_name:  row.stop_name,
+                    next_stop_order: row.stop_order,
+                    waiting_count:   totalWaiting,
+                    timestamp:       new Date().toISOString()
+                });
+            }
+
+            // route-waiting-updated — full upcoming list for driver panel
+            const upcomingStops = await getUpcomingStopsWaiting(row.route_id, bus.current_stop_order);
+            getIO().to(`driver:${bus.driver_id}`).emit('route-waiting-updated', {
+                event:              'route-waiting-updated',
+                route_id:           row.route_id,
+                current_stop_order: bus.current_stop_order,
+                stops:              upcomingStops,
+                timestamp:          new Date().toISOString()
+            });
+        }
+
+        res.status(200).json({
+            success:       true,
+            message:       'Boarded confirmed — waiting entry removed',
+            total_waiting: totalWaiting
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ================================================================
+//  AUTO-EXPIRE JOB
+//  Runs every 60 seconds.
+//  Deletes waiting entries where bus_arrived_at is set but the
+//  passenger has not confirmed boarding within 5 minutes.
+//  Emits waiting:updated + route-waiting-updated for every
+//  affected route so driver panels stay accurate.
+// ================================================================
+const EXPIRE_MINUTES = 5;
+
+async function autoExpireWaiting() {
+    try {
+        // Find all entries that are about to be deleted, grouped by stop + route
+        // so we can emit one update per group, not one per row.
+        const expiredGroups = await pool.query(
+            `SELECT pw.stop_id, pw.route_id,
+                    s.stop_name, s.stop_order,
+                    COUNT(pw.id)::INTEGER AS expiring_count
+             FROM   passenger_waiting pw
+             JOIN   stops s ON s.id = pw.stop_id
+             WHERE  pw.bus_arrived_at IS NOT NULL
+               AND  pw.bus_arrived_at < NOW() - INTERVAL '${EXPIRE_MINUTES} minutes'
+             GROUP  BY pw.stop_id, pw.route_id, s.stop_name, s.stop_order`
+        );
+
+        if (expiredGroups.rows.length === 0) return;
+
+        // Delete all expired rows in one query
+        await pool.query(
+            `DELETE FROM passenger_waiting
+             WHERE  bus_arrived_at IS NOT NULL
+               AND  bus_arrived_at < NOW() - INTERVAL '${EXPIRE_MINUTES} minutes'`
+        );
+
+        // For each affected stop+route, emit updated counts to passengers + drivers
+        for (const group of expiredGroups.rows) {
+            const { stop_id, route_id, stop_name, stop_order } = group;
+
+            // Remaining count after deletion
+            const countResult = await pool.query(
+                `SELECT COUNT(id)::INTEGER AS total_waiting
+                 FROM passenger_waiting WHERE stop_id = $1 AND route_id = $2`,
+                [stop_id, route_id]
+            );
+            const totalWaiting = countResult.rows[0].total_waiting;
+
+            // Emit to passengers on this route
+            getIO().to(`route:${route_id}`).emit('waiting:updated', {
+                event:         'waiting:updated',
+                route_id,
+                stop_id,
+                stop_name,
+                stop_order,
+                total_waiting: totalWaiting,
+                expired:       true,
+                timestamp:     new Date().toISOString()
+            });
+
+            // Emit updated panel to every active driver on this route
+            const busesOnRoute = await pool.query(
+                `SELECT driver_id, current_stop_order
+                 FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+                [route_id]
+            );
+
+            for (const bus of busesOnRoute.rows) {
+                if (bus.current_stop_order === stop_order) {
+                    getIO().to(`driver:${bus.driver_id}`).emit('next-stop-updated', {
+                        event:           'next-stop-updated',
+                        route_id,
+                        next_stop_name:  stop_name,
+                        next_stop_order: stop_order,
+                        waiting_count:   totalWaiting,
+                        timestamp:       new Date().toISOString()
+                    });
+                }
+
+                const upcomingStops = await getUpcomingStopsWaiting(route_id, bus.current_stop_order);
+                getIO().to(`driver:${bus.driver_id}`).emit('route-waiting-updated', {
+                    event:              'route-waiting-updated',
+                    route_id,
+                    current_stop_order: bus.current_stop_order,
+                    stops:              upcomingStops,
+                    timestamp:          new Date().toISOString()
+                });
+            }
+
+            console.log(`[autoExpire] Expired ${group.expiring_count} waiting entries at stop "${stop_name}" (route ${route_id})`);
+        }
+
+    } catch (err) {
+        console.error('[autoExpire] Error:', err.message);
+    }
+}
+
+// ================================================================
+//  PASSENGER: CANCEL WAITING
+//  DELETE /api/passenger/waiting/:id/cancel
+//  Protected: verifyPassenger
+//
+//  Called when passenger changes their plan and no longer wants
+//  to wait for the bus. Deletes only their row and emits updated
+//  counts to all active drivers on that route.
+// ================================================================
+const cancelWaiting = async (req, res) => {
+    try {
+        const passengerId = req.passenger.passengerId;
+        const { id }      = req.params;   // passenger_waiting.id
+
+        // Fetch the row first — need route_id + stop info for the emit
+        const rowResult = await pool.query(
+            `SELECT pw.id, pw.stop_id, pw.route_id, s.stop_name, s.stop_order
+             FROM   passenger_waiting pw
+             JOIN   stops s ON s.id = pw.stop_id
+             WHERE  pw.id = $1 AND pw.passenger_id = $2`,
+            [id, passengerId]
+        );
+
+        if (rowResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Waiting entry not found or does not belong to you'
+            });
+        }
+
+        const row = rowResult.rows[0];
+
+        // Delete only this passenger's row
+        await pool.query(
+            `DELETE FROM passenger_waiting WHERE id = $1`,
+            [id]
+        );
+
+        // New count after deletion
+        const countResult = await pool.query(
+            `SELECT COUNT(id)::INTEGER AS total_waiting
+             FROM passenger_waiting WHERE stop_id = $1 AND route_id = $2`,
+            [row.stop_id, row.route_id]
+        );
+        const totalWaiting = countResult.rows[0].total_waiting;
+
+        // Emit updated count to all passengers on this route
+        getIO().to(`route:${row.route_id}`).emit('waiting:updated', {
+            event:         'waiting:updated',
+            route_id:      row.route_id,
+            stop_id:       row.stop_id,
+            stop_name:     row.stop_name,
+            stop_order:    row.stop_order,
+            total_waiting: totalWaiting,
+            timestamp:     new Date().toISOString()
+        });
+
+        // Emit updated panel to every active driver on this route
+        const busesOnRoute = await pool.query(
+            `SELECT driver_id, id AS bus_id, current_stop_order
+             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+            [row.route_id]
+        );
+
+        for (const bus of busesOnRoute.rows) {
+            // next-stop-updated — only if this stop is their next stop
+            if (bus.current_stop_order === row.stop_order) {
+                getIO().to(`driver:${bus.driver_id}`).emit('next-stop-updated', {
+                    event:           'next-stop-updated',
+                    route_id:        row.route_id,
+                    next_stop_name:  row.stop_name,
+                    next_stop_order: row.stop_order,
+                    waiting_count:   totalWaiting,
+                    timestamp:       new Date().toISOString()
+                });
+            }
+
+            // route-waiting-updated — full upcoming list for driver panel
+            const upcomingStops = await getUpcomingStopsWaiting(row.route_id, bus.current_stop_order);
+            getIO().to(`driver:${bus.driver_id}`).emit('route-waiting-updated', {
+                event:              'route-waiting-updated',
+                route_id:           row.route_id,
+                current_stop_order: bus.current_stop_order,
+                stops:              upcomingStops,
+                timestamp:          new Date().toISOString()
+            });
+        }
+
+        res.status(200).json({
+            success:       true,
+            message:       'Waiting cancelled successfully',
+            total_waiting: totalWaiting
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// Start the job — runs every 60 seconds
+setInterval(autoExpireWaiting, 60 * 1000);
+
 module.exports = {
     registerPassenger, loginPassenger,
     getAllRoutes, getRouteById,
     getLiveBuses, getBusesNearStop, getBusById,
     registerWaiting, getWaitingCountsForRoute,
     driverGetWaitingCounts, driverGetAllWaiting, markStopReached,
+    boardBus, cancelWaiting,
     getRouteETA,
     searchRoute
 };

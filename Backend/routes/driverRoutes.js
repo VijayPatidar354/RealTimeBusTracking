@@ -6,7 +6,8 @@ const {
     getDrivers,
     loginDriver,
     getDriverProfile,
-    updateLocation
+    updateLocation,
+    getRouteStops
 } = require('../controllers/driverController');
 
 const {
@@ -33,5 +34,6 @@ router.get('/route/waiting',       verifyDriver, driverGetWaitingCounts);
 router.get('/route/all-waiting',   verifyDriver, driverGetAllWaiting);
 // Mark stop as reached → clears waiting + advances progression
 router.post('/route/stop-reached', verifyDriver, markStopReached);
+router.get('/route/stops', verifyDriver, getRouteStops);
 
 module.exports = router;

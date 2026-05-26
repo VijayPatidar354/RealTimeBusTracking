@@ -11,6 +11,8 @@ const {
     getBusById,
     registerWaiting,
     getWaitingCountsForRoute,
+    boardBus,
+    cancelWaiting,
     getRouteETA,
     searchRoute
 } = require('../controllers/passengerController');
@@ -31,8 +33,10 @@ router.get('/stops/:stopId/buses', getBusesNearStop);
 router.get('/buses/:id',           getBusById);
 
 // ── WAITING SYSTEM ────────────────────────────────────────────────
-router.post('/waiting',              verifyPassenger, registerWaiting);
-router.get('/routes/:id/waiting',    getWaitingCountsForRoute);
+router.post('/waiting',                    verifyPassenger, registerWaiting);
+router.get('/routes/:id/waiting',          getWaitingCountsForRoute);
+router.post('/waiting/:id/board',          verifyPassenger, boardBus);
+router.delete('/waiting/:id/cancel',       verifyPassenger, cancelWaiting);
 
 // ── ETA (public) ──────────────────────────────────────────────────
 router.get('/routes/:routeId/eta',   getRouteETA);
