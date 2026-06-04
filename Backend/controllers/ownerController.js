@@ -88,15 +88,23 @@ const assignDriver = async (req, res) => {
 const getMyBuses = async (req, res) => {
     try {
         const ownerId = req.owner.ownerId;
-        const result = await pool.query(
-            `
-            SELECT b.id, b.bus_number, b.bus_type,
-                   d.id AS driver_id, d.driver_name, d.phone, d.license_number
-            FROM buses b
-            LEFT JOIN drivers d ON b.driver_id = d.id
-            WHERE b.owner_id = $1
-            ORDER BY b.id
-            `,
+        const result  = await pool.query(
+            `SELECT
+                b.id         AS bus_id,
+                b.bus_number,
+                b.bus_type,
+                b.route_id,
+                b.current_stop_order,
+                d.id         AS driver_id,
+                d.driver_name,
+                d.phone,
+                d.license_number,
+                d.latitude,
+                d.longitude
+             FROM buses b
+             LEFT JOIN drivers d ON b.driver_id = d.id
+             WHERE b.owner_id = $1
+             ORDER BY b.id`,
             [ownerId]
         );
         res.status(200).json({ success: true, buses: result.rows });
@@ -104,7 +112,6 @@ const getMyBuses = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
-
 module.exports = {
     registerOwner, loginOwner,
     createBus, assignDriver, getMyBuses

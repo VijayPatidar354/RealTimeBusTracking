@@ -4,13 +4,17 @@ const router  = express.Router();
 const {
     registerAdmin,
     loginAdmin,
+    getSystemStats,
+    getAllBuses,
     getAllDrivers,
-    getSingleDriver
+    getSingleDriver,
+    getAllOwners,
+    getWaitingOverview,
 } = require('../controllers/adminController');
 
 const {
     adminGetAllRoutes,
-    adminGetRouteById
+    adminGetRouteById,
 } = require('../controllers/routeController');
 
 const verifyAdmin = require('../middleware/adminAuthMiddleware.js');
@@ -19,12 +23,24 @@ const verifyAdmin = require('../middleware/adminAuthMiddleware.js');
 router.post('/register', registerAdmin);
 router.post('/login',    loginAdmin);
 
+// ── STATS ─────────────────────────────────────────────────────────
+router.get('/stats',   verifyAdmin, getSystemStats);
+
+// ── FLEET ─────────────────────────────────────────────────────────
+router.get('/buses',   verifyAdmin, getAllBuses);
+
 // ── DRIVER MANAGEMENT ────────────────────────────────────────────
 router.get('/drivers',     verifyAdmin, getAllDrivers);
 router.get('/drivers/:id', verifyAdmin, getSingleDriver);
 
-// ── ROUTE OVERSIGHT (read-only) ───────────────────────────────────
+// ── OWNER OVERSIGHT ───────────────────────────────────────────────
+router.get('/owners',  verifyAdmin, getAllOwners);
+
+// ── ROUTE OVERSIGHT ───────────────────────────────────────────────
 router.get('/routes',     verifyAdmin, adminGetAllRoutes);
 router.get('/routes/:id', verifyAdmin, adminGetRouteById);
+
+// ── WAITING OVERVIEW ──────────────────────────────────────────────
+router.get('/waiting', verifyAdmin, getWaitingOverview);
 
 module.exports = router;

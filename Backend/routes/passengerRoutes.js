@@ -13,6 +13,7 @@ const {
     getWaitingCountsForRoute,
     boardBus,
     cancelWaiting,
+    getMyWaiting,
     getRouteETA,
     searchRoute
 } = require('../controllers/passengerController');
@@ -33,14 +34,14 @@ router.get('/stops/:stopId/buses', getBusesNearStop);
 router.get('/buses/:id',           getBusById);
 
 // ── WAITING SYSTEM ────────────────────────────────────────────────
-router.post('/waiting',                    verifyPassenger, registerWaiting);
-router.get('/routes/:id/waiting',          getWaitingCountsForRoute);
-router.post('/waiting/:id/board',          verifyPassenger, boardBus);
-router.delete('/waiting/:id/cancel',       verifyPassenger, cancelWaiting);
+router.post('/waiting',              verifyPassenger, registerWaiting);
+router.get('/routes/:id/waiting',    getWaitingCountsForRoute);
+router.post('/waiting/:id/board',    verifyPassenger, boardBus);
+router.delete('/waiting/:id/cancel', verifyPassenger, cancelWaiting);
+router.get('/my-waiting',            verifyPassenger, getMyWaiting);
 
 // ── ETA (public) ──────────────────────────────────────────────────
-router.get('/routes/:routeId/eta',   getRouteETA);
-router.get('/search-route', searchRoute);
-
+router.get('/routes/:routeId/eta', getRouteETA);
+router.get('/search-route',        searchRoute);
 
 module.exports = router;

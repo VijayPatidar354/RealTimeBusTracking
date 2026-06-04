@@ -711,17 +711,153 @@ const markStopReached = async (req, res) => {
             });
         }
 
-        // Trip completed
+        // ================================================================
+        //  TRIP COMPLETED — Auto-assign reverse route
+        //
+        //  Default behaviour: when a bus finishes a route it auto-assigns
+        //  the reverse route (source ↔ destination, stops reversed).
+        //  If the reverse route already exists in the DB it is reused.
+        //  If not, it is created automatically with stops in reverse order.
+        //
+        //  The owner can override this at any time via
+        //  PUT /api/owner/buses/:busId/assign-route — that takes priority.
+        // ================================================================
+
+        // Fetch the current route details
+        const currentRouteResult = await pool.query(
+            `SELECT id, route_name, source, destination, owner_id
+             FROM routes WHERE id = $1`,
+            [route_id]
+        );
+        const currentRoute = currentRouteResult.rows[0];
+
+        // Fetch all stops on the current route ordered by stop_order
+        const currentStopsResult = await pool.query(
+            `SELECT id, stop_name, stop_order, stop_lat, stop_lon
+             FROM stops WHERE route_id = $1
+             ORDER BY stop_order ASC`,
+            [route_id]
+        );
+        const currentStops = currentStopsResult.rows;
+
+        // Build reverse route details
+        const reverseSource      = currentRoute.destination;
+        const reverseDestination = currentRoute.source;
+        const reverseRouteName   = `${reverseSource} to ${reverseDestination}`;
+
+        // Check if a reverse route already exists for this owner
+        // Match by source + destination + owner_id
+        const existingReverseResult = await pool.query(
+            `SELECT id, route_name, source, destination
+             FROM routes
+             WHERE source = $1 AND destination = $2 AND owner_id = $3
+             LIMIT 1`,
+            [reverseSource, reverseDestination, currentRoute.owner_id]
+        );
+
+        let reverseRouteId;
+
+        if (existingReverseResult.rows.length > 0) {
+            // Reverse route already exists — reuse it
+            reverseRouteId = existingReverseResult.rows[0].id;
+        } else {
+            // Create reverse route
+            const newRouteResult = await pool.query(
+                `INSERT INTO routes (route_name, source, destination, owner_id)
+                 VALUES ($1, $2, $3, $4)
+                 RETURNING id`,
+                [reverseRouteName, reverseSource, reverseDestination, currentRoute.owner_id]
+            );
+            reverseRouteId = newRouteResult.rows[0].id;
+
+            // Insert stops in reverse order
+            // Original stop_order 1 becomes the last stop, last becomes 1
+            const totalStops = currentStops.length;
+            for (let i = 0; i < currentStops.length; i++) {
+                const originalStop  = currentStops[totalStops - 1 - i]; // reversed
+                const newStopOrder  = i + 1;
+                await pool.query(
+                    `INSERT INTO stops (route_id, stop_name, stop_order, stop_lat, stop_lon)
+                     VALUES ($1, $2, $3, $4, $5)`,
+                    [
+                        reverseRouteId,
+                        originalStop.stop_name,
+                        newStopOrder,
+                        originalStop.stop_lat  || null,
+                        originalStop.stop_lon  || null,
+                    ]
+                );
+            }
+        }
+
+        // Assign bus to reverse route, reset to stop 1
+        await pool.query(
+            `UPDATE buses SET route_id = $1, current_stop_order = 1 WHERE id = $2`,
+            [reverseRouteId, bus_id]
+        );
+
+        // Fetch first stop of reverse route for next-stop-updated payload
+        const firstStopResult = await pool.query(
+            `SELECT s.id AS stop_id, s.stop_name, s.stop_order,
+                    COUNT(pw.id)::INTEGER AS waiting_count
+             FROM stops s
+             LEFT JOIN passenger_waiting pw
+                    ON pw.stop_id = s.id AND pw.route_id = $1
+             WHERE s.route_id = $1 AND s.stop_order = 1
+             GROUP BY s.id`,
+            [reverseRouteId]
+        );
+        const firstStop = firstStopResult.rows[0] || null;
+
+        // Emit trip:completed to old route room — passengers know bus is done
         getIO().to(`route:${route_id}`).emit('trip:completed', {
-            event: 'trip:completed', bus_id, route_id,
-            message: 'Bus has completed all stops on this route',
-            timestamp: new Date().toISOString()
+            event:           'trip:completed',
+            bus_id,
+            route_id,
+            next_route_id:   reverseRouteId,
+            next_route_name: reverseRouteName,
+            message:         'Bus has completed all stops on this route',
+            timestamp:       new Date().toISOString()
         });
 
+        // Emit bus:route_assigned — driver dashboard reloads with reverse route
+        const routeAssignedPayload = {
+            event:           'bus:route_assigned',
+            bus_id,
+            route_id:        reverseRouteId,
+            route_name:      reverseRouteName,
+            source:          reverseSource,
+            destination:     reverseDestination,
+            auto_reversed:   true,
+            timestamp:       new Date().toISOString()
+        };
+        getIO().to(`driver:${driverId}`).emit('bus:route_assigned', routeAssignedPayload);
+        getIO().to(`owner:${owner_id}`).emit('bus:route_assigned',  routeAssignedPayload);
+        getIO().to('admin').emit('bus:route_assigned',               routeAssignedPayload);
+
+        // Emit next-stop-updated for reverse route — driver panel shows first stop
+        if (firstStop) {
+            const nextStopPayload = {
+                event:           'next-stop-updated',
+                bus_id,
+                route_id:        reverseRouteId,
+                next_stop_name:  firstStop.stop_name,
+                next_stop_order: firstStop.stop_order,
+                waiting_count:   firstStop.waiting_count,
+                timestamp:       new Date().toISOString()
+            };
+            getIO().to(`driver:${driverId}`).emit('next-stop-updated', nextStopPayload);
+            getIO().to(`owner:${owner_id}`).emit('next-stop-updated',  nextStopPayload);
+            getIO().to('admin').emit('next-stop-updated',               nextStopPayload);
+        }
+
         res.status(200).json({
-            success:     true,
-            message:     `Reached final stop "${reachedStop.stop_name}" — trip completed`,
-            trip_status: 'completed'
+            success:          true,
+            message:          `Reached final stop "${reachedStop.stop_name}" — trip completed`,
+            trip_status:      'completed',
+            next_route_id:    reverseRouteId,
+            next_route_name:  reverseRouteName,
+            auto_reversed:    true
         });
 
     } catch (error) {
@@ -1323,6 +1459,47 @@ const cancelWaiting = async (req, res) => {
     }
 };
 
+// ================================================================
+//  PASSENGER: GET MY ACTIVE WAITING ENTRIES
+//  GET /api/passenger/my-waiting
+//  Protected: verifyPassenger
+//
+//  Returns all active waiting entries for the logged-in passenger
+//  with stop and route details. Used by the Trips page.
+// ================================================================
+const getMyWaiting = async (req, res) => {
+    try {
+        const passengerId = req.passenger.passengerId;
+
+        const result = await pool.query(
+            `SELECT
+                pw.id,
+                pw.created_at,
+                pw.bus_arrived_at,
+                s.stop_name,
+                s.stop_order,
+                r.id         AS route_id,
+                r.route_name,
+                r.source,
+                r.destination
+             FROM   passenger_waiting pw
+             JOIN   stops   s ON s.id  = pw.stop_id
+             JOIN   routes  r ON r.id  = pw.route_id
+             WHERE  pw.passenger_id = $1
+             ORDER  BY pw.created_at DESC`,
+            [passengerId]
+        );
+
+        res.status(200).json({
+            success: true,
+            waiting: result.rows
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // Start the job — runs every 60 seconds
 setInterval(autoExpireWaiting, 60 * 1000);
 
@@ -1333,6 +1510,7 @@ module.exports = {
     registerWaiting, getWaitingCountsForRoute,
     driverGetWaitingCounts, driverGetAllWaiting, markStopReached,
     boardBus, cancelWaiting,
+    getMyWaiting,
     getRouteETA,
     searchRoute
 };
