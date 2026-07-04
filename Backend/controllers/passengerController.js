@@ -1203,6 +1203,16 @@ const boardBus = async (req, res) => {
             [id]
         );
 
+        // Record in trip_history — status: boarded
+        await pool.query(
+            `INSERT INTO trip_history
+                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
+             SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'boarded', NOW()
+             FROM   stops s JOIN routes r ON r.id = $3
+             WHERE  s.id = $2`,
+            [passengerId, row.stop_id, row.route_id]
+        );
+
         // New count after deletion
         const countResult = await pool.query(
             `SELECT COUNT(id)::INTEGER AS total_waiting
@@ -1286,17 +1296,34 @@ async function autoExpireWaiting() {
              FROM   passenger_waiting pw
              JOIN   stops s ON s.id = pw.stop_id
              WHERE  pw.bus_arrived_at IS NOT NULL
-               AND  pw.bus_arrived_at < NOW() - INTERVAL '${EXPIRE_MINUTES} minutes'
-             GROUP  BY pw.stop_id, pw.route_id, s.stop_name, s.stop_order`
+               AND  pw.bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')
+             GROUP  BY pw.stop_id, pw.route_id, s.stop_name, s.stop_order`,
+            [EXPIRE_MINUTES]
         );
 
         if (expiredGroups.rows.length === 0) return;
+
+        // Record all expired entries in trip_history before deleting
+        await pool.query(
+            `INSERT INTO trip_history
+                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
+             SELECT pw.passenger_id, pw.stop_id, pw.route_id,
+                    s.stop_name, r.route_name, r.source, r.destination,
+                    'expired', NOW()
+             FROM   passenger_waiting pw
+             JOIN   stops  s ON s.id  = pw.stop_id
+             JOIN   routes r ON r.id  = pw.route_id
+             WHERE  pw.bus_arrived_at IS NOT NULL
+               AND  pw.bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')`,
+            [EXPIRE_MINUTES]
+        );
 
         // Delete all expired rows in one query
         await pool.query(
             `DELETE FROM passenger_waiting
              WHERE  bus_arrived_at IS NOT NULL
-               AND  bus_arrived_at < NOW() - INTERVAL '${EXPIRE_MINUTES} minutes'`
+               AND  bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')`,
+            [EXPIRE_MINUTES]
         );
 
         // For each affected stop+route, emit updated counts to passengers + drivers
@@ -1396,6 +1423,16 @@ const cancelWaiting = async (req, res) => {
         await pool.query(
             `DELETE FROM passenger_waiting WHERE id = $1`,
             [id]
+        );
+
+        // Record in trip_history — status: cancelled
+        await pool.query(
+            `INSERT INTO trip_history
+                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
+             SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'cancelled', NOW()
+             FROM   stops s JOIN routes r ON r.id = $3
+             WHERE  s.id = $2`,
+            [passengerId, row.stop_id, row.route_id]
         );
 
         // New count after deletion
@@ -1500,6 +1537,48 @@ const getMyWaiting = async (req, res) => {
     }
 };
 
+// ================================================================
+//  PASSENGER: GET TRIP HISTORY
+//  GET /api/passenger/my-trips?page=1&limit=20
+//  Protected: verifyPassenger
+// ================================================================
+const getMyTrips = async (req, res) => {
+    try {
+        const passengerId = req.passenger.passengerId;
+        const page        = Math.max(1, parseInt(req.query.page)  || 1);
+        const limit       = Math.min(50, parseInt(req.query.limit) || 20);
+        const offset      = (page - 1) * limit;
+
+        const [tripsResult, countResult] = await Promise.all([
+            pool.query(
+                `SELECT
+                    id, stop_name, route_name, source, destination,
+                    status, created_at, resolved_at
+                 FROM   trip_history
+                 WHERE  passenger_id = $1
+                 ORDER  BY resolved_at DESC
+                 LIMIT  $2 OFFSET $3`,
+                [passengerId, limit, offset]
+            ),
+            pool.query(
+                `SELECT COUNT(*)::INTEGER AS total FROM trip_history WHERE passenger_id = $1`,
+                [passengerId]
+            ),
+        ]);
+
+        res.status(200).json({
+            success:    true,
+            trips:      tripsResult.rows,
+            total:      countResult.rows[0].total,
+            page,
+            limit,
+            total_pages: Math.ceil(countResult.rows[0].total / limit),
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // Start the job — runs every 60 seconds
 setInterval(autoExpireWaiting, 60 * 1000);
 
@@ -1510,7 +1589,7 @@ module.exports = {
     registerWaiting, getWaitingCountsForRoute,
     driverGetWaitingCounts, driverGetAllWaiting, markStopReached,
     boardBus, cancelWaiting,
-    getMyWaiting,
+    getMyWaiting, getMyTrips,
     getRouteETA,
     searchRoute
 };

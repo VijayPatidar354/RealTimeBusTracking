@@ -15,7 +15,8 @@ const {
     cancelWaiting,
     getMyWaiting,
     getRouteETA,
-    searchRoute
+    searchRoute,
+    getMyTrips
 } = require('../controllers/passengerController');
 
 const verifyPassenger = require('../middleware/passengerAuthMiddleware');
@@ -43,5 +44,5 @@ router.get('/my-waiting',            verifyPassenger, getMyWaiting);
 // ── ETA (public) ──────────────────────────────────────────────────
 router.get('/routes/:routeId/eta', getRouteETA);
 router.get('/search-route',        searchRoute);
-
+router.get('/my-trips',           verifyPassenger, getMyTrips);
 module.exports = router;
