@@ -134,3 +134,9 @@ export async function getMyWaiting({ token }) {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+export async function getMyTrips({ token, page = 1, limit = 20 }) {
+  return request(`/api/passenger/my-trips?page=${page}&limit=${limit}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}

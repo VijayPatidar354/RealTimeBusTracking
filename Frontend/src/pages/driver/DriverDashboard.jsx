@@ -325,10 +325,13 @@ export default function DriverDashboard() {
 
   // ── Socket ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!driver?.id) return;
+    if (!driver?.id || !token) return;
 
     const onConnect = () => {
       setConnected(true);
+      // Re-send auth token on every (re)connect so the server always
+      // has the latest token before we join the driver room.
+      socket.auth = { token };
       socket.emit('join:driver', { driverId: driver.id });
     };
     const onDisconnect = () => setConnected(false);
