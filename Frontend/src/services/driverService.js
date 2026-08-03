@@ -44,6 +44,7 @@ export function readDriverSession() {
   };
 }
 
+
 export function clearDriverSession() {
   localStorage.removeItem(DRIVER_TOKEN_KEY);
   localStorage.removeItem(DRIVER_INFO_KEY);
@@ -57,6 +58,44 @@ export async function loginDriver({ phone, password }) {
     body:    JSON.stringify({ phone, password }),
   });
 }
+export async function registerDriver({
+  driver_name,
+  phone,
+  email,
+  license_number,
+  password,
+}) {
+  return request('/api/driver/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      driver_name,
+      phone,
+      email,
+      license_number,
+      password,
+    }),
+  });
+}
+
+export async function verifyDriverRegistration({ email, otp }) {
+  return request('/api/driver/verify-register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+}
+
+export async function resendDriverOtp({ email }) {
+  return request('/api/driver/resend-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+}
+
 
 export async function getDriverProfile(token) {
   return request('/api/driver/profile', {

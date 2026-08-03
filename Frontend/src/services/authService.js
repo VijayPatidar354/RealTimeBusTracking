@@ -65,6 +65,20 @@ export async function registerPassengerAccount(values) {
   });
 }
 
+export async function verifyPassengerRegistration({ email, otp }) {
+  return authRequest('/api/passenger/verify-register', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp }),
+  });
+}
+
+export async function resendPassengerOtp({ email }) {
+  return authRequest('/api/passenger/resend-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
 export async function loginPassengerAccount({ email, password }) {
   const data = await authRequest('/api/passenger/login', {
     method: 'POST',

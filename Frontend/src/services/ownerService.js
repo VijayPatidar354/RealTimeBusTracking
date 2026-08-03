@@ -66,6 +66,22 @@ export async function registerOwner({ owner_name, email, password }) {
   });
 }
 
+export async function verifyOwnerRegistration({ email, otp }) {
+  return request('/api/owner/verify-register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+}
+
+export async function resendOwnerOtp({ email }) {
+  return request('/api/owner/resend-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+}
+
 // ── Buses ──────────────────────────────────────────────────────────
 export async function getMyBuses(token) {
   return request('/api/owner/buses', {

@@ -1,17 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, UserPlus, Mail, ArrowLeft } from 'lucide-react';
-import { registerPassengerAccount, verifyPassengerRegistration, resendPassengerOtp } from '../../services/authService.js';
+import { registerOwner, verifyOwnerRegistration, resendOwnerOtp } from '../../services/ownerService.js';
 
 const initialValues = {
-  passengerName: '',
-  phone: '',
+  ownerName: '',
   email: '',
   password: '',
   confirmPassword: '',
 };
 
-function PassengerRegister() {
+function OwnerRegister() {
   const navigate = useNavigate();
   const [step, setStep] = useState('form');
   const [values, setValues] = useState(initialValues);
@@ -50,19 +49,25 @@ function PassengerRegister() {
   };
 
   const updateValue = (key, value) => {
-    setValues((current) => ({ ...current, [key]: value }));
+    setValues((current) => ({
+      ...current,
+      [key]: value,
+    }));
   };
 
   const validate = () => {
-    if (!values.passengerName.trim() || !values.phone.trim() || !values.email.trim()) {
-      return 'Name, phone, and email are required.';
+    if (!values.ownerName.trim() || !values.email.trim()) {
+      return 'Owner name and email are required.';
     }
-    if (values.password.length < 8) {
-      return 'Password must be at least 8 characters.';
+
+    if (values.password.length < 6) {
+      return 'Password must be at least 6 characters.';
     }
+
     if (values.password !== values.confirmPassword) {
       return 'Passwords do not match.';
     }
+
     return '';
   };
 
@@ -79,7 +84,11 @@ function PassengerRegister() {
 
     setLoading(true);
     try {
-      await registerPassengerAccount(values);
+      await registerOwner({
+        owner_name: values.ownerName,
+        email: values.email,
+        password: values.password
+      });
       setSuccess(`Verification code sent to ${values.email}`);
       setStep('otp');
       startTimer();
@@ -103,9 +112,9 @@ function PassengerRegister() {
 
     setLoading(true);
     try {
-      await verifyPassengerRegistration({ email: values.email, otp });
+      await verifyOwnerRegistration({ email: values.email, otp });
       setSuccess('Account created successfully. Redirecting to login...');
-      window.setTimeout(() => navigate('/passenger/login'), 1500);
+      window.setTimeout(() => navigate('/owner/login'), 1500);
     } catch (verifyError) {
       setError(verifyError.message || 'Verification failed.');
     } finally {
@@ -118,7 +127,7 @@ function PassengerRegister() {
     setSuccess('');
     setLoading(true);
     try {
-      await resendPassengerOtp({ email: values.email });
+      await resendOwnerOtp({ email: values.email });
       setSuccess(`Verification code resent to ${values.email}`);
       startTimer();
       setTimeout(() => setSuccess(''), 3000);
@@ -137,81 +146,91 @@ function PassengerRegister() {
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-200">
               <UserPlus className="h-6 w-6" aria-hidden="true" />
             </div>
+
             <h2 className="mt-5 text-2xl font-semibold text-ink-950 dark:text-white">
-              Create Passenger Account
+              Create Owner Account
             </h2>
+
             <p className="mt-2 text-sm leading-6 text-ink-600 dark:text-ink-300">
-              Your account unlocks passenger actions like waiting registration and
-              future saved route features.
+              Register as a bus owner and start managing your buses and drivers.
             </p>
 
-            <form onSubmit={handleRegisterSubmit} className="mt-6 grid gap-4 sm:grid-cols-2">
-              <label className="block sm:col-span-2">
+            <form
+              onSubmit={handleRegisterSubmit}
+              className="mt-6 grid gap-4"
+            >
+
+              <label className="block">
                 <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">
-                  Passenger name
+                  Owner Name
                 </span>
+
                 <input
-                  value={values.passengerName}
-                  onChange={(event) => updateValue('passengerName', event.target.value)}
+                  value={values.ownerName}
+                  onChange={(event) =>
+                    updateValue('ownerName', event.target.value)
+                  }
                   className="focus-ring mt-2 h-12 w-full rounded-lg border border-ink-200 bg-ink-50 px-4 text-sm font-medium text-ink-950 dark:border-white/10 dark:bg-ink-950 dark:text-white"
                   autoComplete="name"
                 />
               </label>
-              <label className="block">
-                <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">
-                  Phone
-                </span>
-                <input
-                  value={values.phone}
-                  onChange={(event) => updateValue('phone', event.target.value)}
-                  className="focus-ring mt-2 h-12 w-full rounded-lg border border-ink-200 bg-ink-50 px-4 text-sm font-medium text-ink-950 dark:border-white/10 dark:bg-ink-950 dark:text-white"
-                  autoComplete="tel"
-                />
-              </label>
+
               <label className="block">
                 <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">
                   Email
                 </span>
+
                 <input
                   type="email"
                   value={values.email}
-                  onChange={(event) => updateValue('email', event.target.value)}
+                  onChange={(event) =>
+                    updateValue('email', event.target.value)
+                  }
                   className="focus-ring mt-2 h-12 w-full rounded-lg border border-ink-200 bg-ink-50 px-4 text-sm font-medium text-ink-950 dark:border-white/10 dark:bg-ink-950 dark:text-white"
                   autoComplete="email"
                 />
               </label>
+
               <label className="block">
                 <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">
                   Password
                 </span>
+
                 <input
                   type="password"
                   value={values.password}
-                  onChange={(event) => updateValue('password', event.target.value)}
+                  onChange={(event) =>
+                    updateValue('password', event.target.value)
+                  }
                   className="focus-ring mt-2 h-12 w-full rounded-lg border border-ink-200 bg-ink-50 px-4 text-sm font-medium text-ink-950 dark:border-white/10 dark:bg-ink-950 dark:text-white"
                   autoComplete="new-password"
                 />
               </label>
+
               <label className="block">
                 <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">
-                  Confirm password
+                  Confirm Password
                 </span>
+
                 <input
                   type="password"
                   value={values.confirmPassword}
-                  onChange={(event) => updateValue('confirmPassword', event.target.value)}
+                  onChange={(event) =>
+                    updateValue('confirmPassword', event.target.value)
+                  }
                   className="focus-ring mt-2 h-12 w-full rounded-lg border border-ink-200 bg-ink-50 px-4 text-sm font-medium text-ink-950 dark:border-white/10 dark:bg-ink-950 dark:text-white"
                   autoComplete="new-password"
                 />
               </label>
 
               {error ? (
-                <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-200 sm:col-span-2">
+                <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">
                   {error}
                 </p>
               ) : null}
+
               {success ? (
-                <p className="rounded-lg bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 dark:bg-brand-500/10 dark:text-brand-200 sm:col-span-2">
+                <p className="rounded-lg bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 dark:bg-brand-500/10 dark:text-brand-200">
                   {success}
                 </p>
               ) : null}
@@ -219,21 +238,29 @@ function PassengerRegister() {
               <button
                 type="submit"
                 disabled={loading}
-                className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-ink-300 disabled:text-ink-500 sm:col-span-2"
+                className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-ink-300 disabled:text-ink-500"
               >
                 {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <Loader2
+                    className="h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <UserPlus className="h-4 w-4" aria-hidden="true" />
+                  <UserPlus
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  />
                 )}
-                Create account
+
+                Create Account
               </button>
+
             </form>
 
             <p className="mt-5 text-sm text-ink-600 dark:text-ink-300">
               Already registered?{' '}
               <Link
-                to="/passenger/login"
+                to="/owner/login"
                 className="font-semibold text-brand-700 hover:text-brand-800 dark:text-brand-200"
               >
                 Login
@@ -326,4 +353,4 @@ function PassengerRegister() {
   );
 }
 
-export default PassengerRegister;
+export default OwnerRegister;

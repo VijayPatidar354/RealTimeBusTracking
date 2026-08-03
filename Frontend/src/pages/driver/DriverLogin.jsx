@@ -1,25 +1,25 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Bus, Lock, Phone, AlertCircle, Loader2 } from 'lucide-react';
-import { useDriverAuth } from '../../context/DriverAuthContext.jsx';
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Bus, Lock, Phone, AlertCircle, Loader2 } from "lucide-react";
+import { useDriverAuth } from "../../context/DriverAuthContext.jsx";
 
 export default function DriverLogin() {
-  const { login }    = useDriverAuth();
-  const navigate     = useNavigate();
-  const [phone, setPhone]       = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
+  const { login } = useDriverAuth();
+  const navigate = useNavigate();
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setError("");
     setLoading(true);
     try {
       await login({ phone, password });
-      navigate('/driver/dashboard');
+      navigate("/driver/dashboard");
     } catch (err) {
-      setError(err.message || 'Login failed. Check your credentials.');
+      setError(err.message || "Login failed. Check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -32,8 +32,8 @@ export default function DriverLogin() {
         className="pointer-events-none fixed inset-0 opacity-[0.03]"
         style={{
           backgroundImage:
-            'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)',
-          backgroundSize: '40px 40px',
+            "linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)",
+          backgroundSize: "40px 40px",
         }}
       />
 
@@ -44,7 +44,9 @@ export default function DriverLogin() {
             <Bus className="h-8 w-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">Driver Login</h1>
-          <p className="mt-1 text-sm text-ink-400">Sign in to start your shift</p>
+          <p className="mt-1 text-sm text-ink-400">
+            Sign in to start your shift
+          </p>
         </div>
 
         {/* Card */}
@@ -102,10 +104,19 @@ export default function DriverLogin() {
                   Signing in...
                 </span>
               ) : (
-                'Sign In'
+                "Sign In"
               )}
             </button>
           </form>
+          <p className="mt-5 text-center text-sm text-ink-400">
+            Don't have an account?{" "}
+            <Link
+              to="/driver/register"
+              className="font-semibold text-brand-400 hover:text-brand-300"
+            >
+              Register
+            </Link>
+          </p>
         </div>
       </div>
     </div>

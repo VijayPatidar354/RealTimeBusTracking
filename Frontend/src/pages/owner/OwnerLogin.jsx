@@ -1,25 +1,25 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Bus, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
-import { useOwnerAuth } from '../../context/OwnerAuthContext.jsx';
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Bus, Mail, Lock, AlertCircle, Loader2 } from "lucide-react";
+import { useOwnerAuth } from "../../context/OwnerAuthContext.jsx";
 
 export default function OwnerLogin() {
-  const { login }    = useOwnerAuth();
-  const navigate     = useNavigate();
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState('');
+  const { login } = useOwnerAuth();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setError("");
     setLoading(true);
     try {
       await login({ email, password });
-      navigate('/owner/dashboard');
+      navigate("/owner/dashboard");
     } catch (err) {
-      setError(err.message || 'Login failed. Check your credentials.');
+      setError(err.message || "Login failed. Check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -33,8 +33,12 @@ export default function OwnerLogin() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-600 shadow-lg shadow-brand-600/30">
             <Bus className="h-8 w-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-ink-950 dark:text-white">Owner Login</h1>
-          <p className="mt-1 text-sm text-ink-500">Sign in to manage your fleet</p>
+          <h1 className="text-2xl font-bold text-ink-950 dark:text-white">
+            Owner Login
+          </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Sign in to manage your fleet
+          </p>
         </div>
 
         {/* Card */}
@@ -48,7 +52,9 @@ export default function OwnerLogin() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-ink-500">Email</label>
+              <label className="mb-1.5 block text-xs font-medium text-ink-500">
+                Email
+              </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
                 <input
@@ -63,7 +69,9 @@ export default function OwnerLogin() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-ink-500">Password</label>
+              <label className="mb-1.5 block text-xs font-medium text-ink-500">
+                Password
+              </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
                 <input
@@ -87,9 +95,20 @@ export default function OwnerLogin() {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Signing in...
                 </span>
-              ) : 'Sign In'}
+              ) : (
+                "Sign In"
+              )}
             </button>
           </form>
+          <p className="mt-5 text-center text-sm text-ink-600 dark:text-ink-300">
+            Don't have an account?{' '}
+            <Link
+              to="/owner/register"
+              className="font-semibold text-brand-700 hover:text-brand-800 dark:text-brand-200"
+            >
+              Register
+            </Link>
+          </p>
         </div>
       </div>
     </div>

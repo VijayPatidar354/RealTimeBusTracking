@@ -5,6 +5,7 @@ import {
   readDriverSession,
   saveDriverSession,
   getDriverProfile,
+  registerDriver,
 } from '../services/driverService.js';
 
 const DriverAuthContext = createContext(null);
@@ -19,6 +20,15 @@ export function DriverAuthProvider({ children }) {
     setToken(session.token);
     setDriver(session.driver);
     setRestoring(false);
+  }, []);
+
+  const register = useCallback(async (values) => {
+    return registerDriver({
+      driver_name: values.driverName,
+      phone: values.phone,
+      license_number: values.licenseNumber,
+      password: values.password,
+    });
   }, []);
 
   const login = useCallback(async ({ phone, password }) => {
@@ -48,8 +58,8 @@ export function DriverAuthProvider({ children }) {
   const value = useMemo(() => ({
     token, driver, restoring,
     isAuthenticated: Boolean(token),
-    login, logout, refreshProfile,
-  }), [token, driver, restoring, login, logout, refreshProfile]);
+    login, logout, refreshProfile, register,
+  }), [token, driver, restoring, register, login, logout, refreshProfile]);
 
   return (
     <DriverAuthContext.Provider value={value}>

@@ -4,6 +4,8 @@ import {
   loginOwner,
   readOwnerSession,
   saveOwnerSession,
+  registerOwner,
+
 } from '../services/ownerService.js';
 
 const OwnerAuthContext = createContext(null);
@@ -21,6 +23,13 @@ export function OwnerAuthProvider({ children }) {
     setRestoring(false);
   }, []);
 
+  const register = useCallback(async (values) => {
+    return registerOwner({
+      owner_name: values.ownerName,
+      email: values.email,
+      password: values.password,
+    });
+  }, []);
   const login = useCallback(async ({ email, password }) => {
     const data = await loginOwner({ email, password });
     // Backend only returns token on login — store what we have
@@ -41,8 +50,8 @@ export function OwnerAuthProvider({ children }) {
   const value = useMemo(() => ({
     token, owner, restoring,
     isAuthenticated: Boolean(token),
-    login, logout,
-  }), [token, owner, restoring, login, logout]);
+    login, logout, register,
+  }), [token, owner, restoring, register, login, logout]);
 
   return (
     <OwnerAuthContext.Provider value={value}>

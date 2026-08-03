@@ -4,11 +4,11 @@ import { appRoutes } from './routes/appRoutes.jsx';
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/passenger" replace />} />
+      <Route path="/" element={<Navigate to="/home" replace />} />
       {appRoutes.map(({ path, element }) => (
         <Route key={path} path={path} element={element} />
       ))}
-      <Route path="*" element={<Navigate to="/passenger" replace />} />
+      <Route path="*" element={<Navigate to="/home" replace />} />
     </Routes>
   );
 }
