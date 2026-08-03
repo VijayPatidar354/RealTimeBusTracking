@@ -19,10 +19,23 @@ const initSocket = (httpServer) => {
 
     io = new Server(httpServer, {
         cors: {
-            // Reuse the same allowed origins as the Express CORS config
-            origin: (process.env.CLIENT_ORIGIN || 'http://localhost:3000')
-                .split(',')
-                .map(o => o.trim()),
+            // Dynamic origin check — matches Express CORS config.
+            // Auto-allows ngrok tunnels so physical devices work without
+            // manually updating CLIENT_ORIGIN every time ngrok restarts.
+            origin: (origin, callback) => {
+                if (!origin) return callback(null, true);
+                const allowed = (process.env.CLIENT_ORIGIN || 'http://localhost:3000')
+                    .split(',')
+                    .map(o => o.trim());
+                if (allowed.includes(origin)) return callback(null, true);
+                try {
+                    const host = new URL(origin).hostname;
+                    if (/\.ngrok(-free)?\.(app|dev)$/.test(host) || /\.ngrok\.io$/.test(host)) {
+                        return callback(null, true);
+                    }
+                } catch (_) {}
+                callback(new Error('Socket CORS: origin not allowed'));
+            },
             methods: ['GET', 'POST'],
             credentials: true
         }

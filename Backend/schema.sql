@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     driver_name     VARCHAR(100)    NOT NULL,
     phone           VARCHAR(20)     NOT NULL UNIQUE,
     license_number  VARCHAR(50)     NOT NULL,
+    email           VARCHAR(150)    UNIQUE,         -- for OTP verification during registration
     password        VARCHAR(255)    NOT NULL,
     latitude        NUMERIC(10, 7)  DEFAULT NULL,  -- live GPS lat
     longitude       NUMERIC(10, 7)  DEFAULT NULL,  -- live GPS lon
@@ -140,6 +141,22 @@ CREATE TABLE IF NOT EXISTS trip_history (
 
 CREATE INDEX IF NOT EXISTS idx_th_passenger ON trip_history(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_th_resolved  ON trip_history(passenger_id, resolved_at DESC);
+
+-- ── PENDING REGISTRATIONS ─────────────────────────────────────────
+-- Temporary storage for registration data until email OTP is verified.
+-- Accounts are only created in the real tables after successful verification.
+-- Expired rows are cleaned up automatically every 30 minutes.
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id          SERIAL PRIMARY KEY,
+    role        VARCHAR(20)   NOT NULL CHECK (role IN ('passenger', 'driver', 'owner')),
+    email       VARCHAR(150)  NOT NULL,
+    data        JSONB         NOT NULL,
+    otp_code    VARCHAR(6)    NOT NULL,
+    otp_expires TIMESTAMPTZ   NOT NULL,
+    attempts    INTEGER       NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    UNIQUE (email, role)
+);
 
 -- ================================================================
 --  SEED: Default Admin Account

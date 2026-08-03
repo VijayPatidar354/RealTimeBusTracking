@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { getIO } = require('../socket');
+const { safeErrorResponse } = require('../utils/validators');
 
 const createRoute = async (req, res) => {
     try {
@@ -15,7 +16,7 @@ const createRoute = async (req, res) => {
         );
         res.status(201).json({ success: true, route: result.rows[0] });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -65,7 +66,7 @@ const addStop = async (req, res) => {
         if (error.code === '23505') {
             return res.status(409).json({ success: false, message: `stop_order ${req.body.stop_order} already exists on this route` });
         }
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -85,7 +86,7 @@ const getMyRoutes = async (req, res) => {
         );
         res.status(200).json({ success: true, total: result.rows.length, routes: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -117,7 +118,7 @@ const getMyRouteById = async (req, res) => {
             route: { ...routeResult.rows[0], total_stops: stopsResult.rows.length, stops: stopsResult.rows, buses: busesResult.rows }
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -183,7 +184,7 @@ const assignRoute = async (req, res) => {
         getIO().to('admin').emit('bus:route_assigned',              payload);
         res.status(200).json({ success: true, message: "Route assigned — bus progression reset to stop 1", bus, route });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -202,7 +203,7 @@ const adminGetAllRoutes = async (req, res) => {
         );
         res.status(200).json({ success: true, total: result.rows.length, routes: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 
@@ -235,7 +236,7 @@ const adminGetRouteById = async (req, res) => {
             route: { ...routeResult.rows[0], total_stops: stopsResult.rows.length, stops: stopsResult.rows, buses: busesResult.rows }
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Route');
     }
 };
 

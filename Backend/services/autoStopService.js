@@ -255,23 +255,56 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
             ` (order ${current_stop_order}) at ${Math.round(distMetres)}m — progressing`
         );
 
-        // ── 7. Clear waiting passengers for the reached stop ─────
-        const deleted = await pool.query(
-            `DELETE FROM passenger_waiting
-             WHERE  stop_id  = $1
-               AND  route_id = $2`,
+        // ── 7. Stamp bus_arrived_at on all waiting entries for this stop ─────
+        //
+        //  DO NOT hard-delete here.  The manual path (markStopReached) stamps
+        //  bus_arrived_at and gives passengers a 5-minute window to confirm
+        //  boarding via POST /waiting/:id/board.  We mirror that behaviour so
+        //  the full lifecycle works identically regardless of whether the stop
+        //  was detected automatically (geofence) or manually (button press):
+        //
+        //    1. bus_arrived_at is stamped                 ← this block
+        //    2. Passenger sees "Did you board?" prompt    ← waiting:updated {bus_arrived:true}
+        //    3a. Passenger taps Yes  → boardBus()         → trip_history 'boarded'  + DELETE
+        //    3b. Passenger taps No   → row stays until autoExpireWaiting runs
+        //    3c. No action           → autoExpireWaiting  → trip_history 'expired'  + DELETE
+        //
+        //  Only stamp rows that haven't already been stamped (bus_arrived_at IS NULL)
+        //  to avoid overwriting a timestamp from a manual markStopReached call that
+        //  ran in the same window.
+        await pool.query(
+            `UPDATE passenger_waiting
+             SET    bus_arrived_at = NOW()
+             WHERE  stop_id        = $1
+               AND  route_id       = $2
+               AND  bus_arrived_at IS NULL`,
             [nextStop.stop_id, route_id]
         );
 
-        // ── 8. Emit: waiting:updated (count = 0) ─────────────────
+        // ── 8. Emit: waiting:updated (bus_arrived: true) ──────────────────
+        //
+        //  bus_arrived: true tells the passenger frontend to show the
+        //  "Did you board?" prompt — same flag emitted by markStopReached.
+        //  total_waiting is kept at current count (rows still exist until
+        //  board/expire runs) so the driver panel stays accurate.
+        const waitingCountResult = await pool.query(
+            `SELECT COUNT(id)::INTEGER AS total_waiting
+             FROM passenger_waiting
+             WHERE stop_id = $1 AND route_id = $2`,
+            [nextStop.stop_id, route_id]
+        );
+        const currentWaiting = waitingCountResult.rows[0].total_waiting;
+
         getIO().to(`route:${route_id}`).emit('waiting:updated', {
-            event:         'waiting:updated',
-            route_id:      parseInt(route_id),
-            stop_id:       nextStop.stop_id,
-            stop_name:     nextStop.stop_name,
-            stop_order:    nextStop.stop_order,
-            total_waiting: 0,
-            timestamp:     new Date().toISOString()
+            event:          'waiting:updated',
+            route_id:       parseInt(route_id),
+            stop_id:        nextStop.stop_id,
+            stop_name:      nextStop.stop_name,
+            stop_order:     nextStop.stop_order,
+            total_waiting:  currentWaiting,
+            bus_arrived:    true,          // triggers "Did you board?" prompt on frontend
+            auto_detected:  true,
+            timestamp:      new Date().toISOString()
         });
 
         // ── 9. Compute new stop order and trip status ─────────────
@@ -286,15 +319,15 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
 
         // ── 11. Emit: stop:reached ────────────────────────────────
         const stopReachedPayload = {
-            event:            'stop:reached',
+            event:                 'stop:reached',
             bus_id,
             route_id,
-            stop_id:          nextStop.stop_id,
-            stop_name:        nextStop.stop_name,
-            stop_order:       nextStop.stop_order,
-            passengers_reset: deleted.rowCount,
-            auto_detected:    true,
-            timestamp:        new Date().toISOString()
+            stop_id:               nextStop.stop_id,
+            stop_name:             nextStop.stop_name,
+            stop_order:            nextStop.stop_order,
+            passengers_notified:   currentWaiting,  // rows stamped with bus_arrived_at
+            auto_detected:         true,
+            timestamp:             new Date().toISOString()
         };
         getIO().to(`route:${route_id}`).emit('stop:reached',  stopReachedPayload);
         getIO().to(`driver:${driverId}`).emit('stop:reached', stopReachedPayload);
@@ -332,8 +365,11 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
                 event:           'next-stop-updated',
                 bus_id,
                 route_id,
+                stop_id:         nextStopInfo.stop_id,
                 next_stop_name:  nextStopInfo.next_stop_name,
                 next_stop_order: nextStopInfo.next_stop_order,
+                stop_lat:        nextStopInfo.stop_lat,
+                stop_lon:        nextStopInfo.stop_lon,
                 waiting_count:   nextStopInfo.waiting_count,
                 auto_detected:   true,
                 timestamp:       new Date().toISOString()

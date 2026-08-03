@@ -1,8 +1,9 @@
 const express = require('express');
 const router  = express.Router();
+const { authLimiter } = require('../middleware/rateLimiter');
 
 const {
-    registerAdmin,
+   // registerAdmin,
     loginAdmin,
     getSystemStats,
     getAllBuses,
@@ -20,8 +21,8 @@ const {
 const verifyAdmin = require('../middleware/adminAuthMiddleware.js');
 
 // ── AUTH ──────────────────────────────────────────────────────────
-router.post('/register', registerAdmin);
-router.post('/login',    loginAdmin);
+//router.post('/register', registerAdmin);
+router.post('/login',    authLimiter, loginAdmin);
 
 // ── STATS ─────────────────────────────────────────────────────────
 router.get('/stats',   verifyAdmin, getSystemStats);

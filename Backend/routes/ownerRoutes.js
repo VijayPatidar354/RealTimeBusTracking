@@ -1,9 +1,11 @@
 
 const express = require('express');
 const router  = express.Router();
+const { authLimiter } = require('../middleware/rateLimiter');
+
+const reg = require('../controllers/registrationController');
 
 const {
-    registerOwner,
     loginOwner,
     createBus,
     assignDriver,
@@ -21,8 +23,10 @@ const {
 const verifyOwner = require('../middleware/ownerAuthMiddleware');
 
 // ── AUTH ──────────────────────────────────────────────────────────
-router.post('/register', registerOwner);
-router.post('/login',    loginOwner);
+router.post('/register',        authLimiter, reg.initiateRegistration('owner'));
+router.post('/verify-register', authLimiter, reg.verifyAndRegister('owner'));
+router.post('/resend-otp',      authLimiter, reg.resendOtp('owner'));
+router.post('/login',    authLimiter, loginOwner);
 
 // ── BUS MANAGEMENT ───────────────────────────────────────────────
 router.post('/buses',                      verifyOwner, createBus);

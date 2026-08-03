@@ -1,8 +1,10 @@
 const express = require('express');
 const router  = express.Router();
+const { authLimiter, gpsLimiter } = require('../middleware/rateLimiter');
+
+const reg = require('../controllers/registrationController');
 
 const {
-    registerDriver,
     getDrivers,
     loginDriver,
     getDriverProfile,
@@ -17,15 +19,20 @@ const {
 } = require('../controllers/passengerController');
 
 const verifyDriver = require('../middleware/authMiddleware');
+const verifyAdmin  = require('../middleware/adminAuthMiddleware');
 
 // ── AUTH ──────────────────────────────────────────────────────────
-router.post('/register', registerDriver);
-router.post('/login',    loginDriver);
-router.get('/',          getDrivers);
+router.post('/register',        authLimiter, reg.initiateRegistration('driver'));
+router.post('/verify-register', authLimiter, reg.verifyAndRegister('driver'));
+router.post('/resend-otp',      authLimiter, reg.resendOtp('driver'));
+router.post('/login',    authLimiter, loginDriver);
+// Protected: only admins can list all drivers (never public — contains PII)
+router.get('/',          verifyAdmin, getDrivers);
+
 
 // ── DRIVER PROFILE & LOCATION ─────────────────────────────────────
 router.get('/profile',             verifyDriver, getDriverProfile);
-router.put('/update-location',     verifyDriver, updateLocation);
+router.put('/update-location',     verifyDriver, gpsLimiter, updateLocation);
 
 // ── WAITING VISIBILITY ────────────────────────────────────────────
 // Next stop only (immediate panel)

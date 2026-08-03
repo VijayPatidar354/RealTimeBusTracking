@@ -1,27 +1,31 @@
 const pool   = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
+const { safeErrorResponse } = require('../utils/validators');
 
 // ── AUTH ──────────────────────────────────────────────────────────
-const registerAdmin = async (req, res) => {
-    try {
-        const { admin_name, email, password } = req.body;
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const result = await pool.query(
-            `INSERT INTO admins (admin_name, email, password)
-             VALUES ($1, $2, $3)
-             RETURNING id, admin_name, email`,
-            [admin_name, email, hashedPassword]
-        );
-        res.status(201).json({ success: true, admin: result.rows[0] });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
+// const registerAdmin = async (req, res) => {
+//     try {
+//         const { admin_name, email, password } = req.body;
+//         const hashedPassword = await bcrypt.hash(password, 10);
+//         const result = await pool.query(
+//             `INSERT INTO admins (admin_name, email, password)
+//              VALUES ($1, $2, $3)
+//              RETURNING id, admin_name, email`,
+//             [admin_name, email, hashedPassword]
+//         );
+//         res.status(201).json({ success: true, admin: result.rows[0] });
+//     } catch (error) {
+//         safeErrorResponse(res, error, 'Admin');
+//     }
+// };
 
 const loginAdmin = async (req, res) => {
     try {
         const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ success: false, message: 'Email and password are required' });
+        }
         const result = await pool.query(`SELECT * FROM admins WHERE email = $1`, [email]);
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, message: 'Admin not found' });
@@ -34,7 +38,7 @@ const loginAdmin = async (req, res) => {
         const token = jwt.sign(
             { id: admin.id, role: 'admin' },
             process.env.JWT_SECRET,
-            { expiresIn: '7d' }
+            { expiresIn: '24h' }
         );
         res.status(200).json({
             success: true,
@@ -42,7 +46,7 @@ const loginAdmin = async (req, res) => {
             admin: { id: admin.id, admin_name: admin.admin_name, email: admin.email }
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -71,7 +75,7 @@ const getSystemStats = async (req, res) => {
         `);
         res.status(200).json({ success: true, stats: result.rows[0] });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -107,7 +111,7 @@ const getAllBuses = async (req, res) => {
         `);
         res.status(200).json({ success: true, total: result.rows.length, buses: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -139,7 +143,7 @@ const getAllDrivers = async (req, res) => {
         `);
         res.status(200).json({ success: true, total: result.rows.length, drivers: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -166,7 +170,7 @@ const getSingleDriver = async (req, res) => {
         }
         res.status(200).json({ success: true, driver: result.rows[0] });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -191,7 +195,7 @@ const getAllOwners = async (req, res) => {
         `);
         res.status(200).json({ success: true, total: result.rows.length, owners: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
@@ -222,12 +226,12 @@ const getWaitingOverview = async (req, res) => {
         `);
         res.status(200).json({ success: true, total: result.rows.length, waiting: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Admin');
     }
 };
 
 module.exports = {
-    registerAdmin,
+    // registerAdmin,
     loginAdmin,
     getSystemStats,
     getAllBuses,

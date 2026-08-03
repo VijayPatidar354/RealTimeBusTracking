@@ -15,7 +15,7 @@ const verifyPassenger = (req, res, next) => {
         const token   = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        if (!decoded.passengerId) {
+        if (!decoded.passengerId || decoded.role !== 'passenger') {
             return res.status(403).json({
                 success: false,
                 message: "Access denied: not a passenger token"

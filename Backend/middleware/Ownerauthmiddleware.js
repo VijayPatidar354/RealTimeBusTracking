@@ -22,7 +22,7 @@ const verifyOwner = (req, res, next) => {
         );
 
         // Owner token payload uses ownerId (see loginOwner)
-        if (!decoded.ownerId) {
+        if (!decoded.ownerId || decoded.role !== 'owner') {
             return res.status(403).json({
                 success: false,
                 message: "Access denied: not an owner token"

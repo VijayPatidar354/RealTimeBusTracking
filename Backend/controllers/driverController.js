@@ -4,35 +4,19 @@ const jwt    = require('jsonwebtoken');
 const { getIO } = require('../socket');
 const { checkAndProgressStop } = require('../services/autoStopService');
 const etaService = require('../services/etaService');
-
-const registerDriver = async (req, res) => {
-    try {
-        const { driver_name, phone, license_number, password } = req.body;
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const result = await pool.query(
-            `
-            INSERT INTO drivers
-                (driver_name, phone, license_number, password)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, driver_name, phone, license_number
-            `,
-            [driver_name, phone, license_number, hashedPassword]
-        );
-        res.status(201).json({ success: true, driver: result.rows[0] });
-    } catch (error) {
-        console.log(error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
+const { validatePhone, validatePassword, validateName, validateCoordinates, safeErrorResponse, validateLicenseNumber } = require('../utils/validators');
+const { runValidations } = require('../utils/runValidations');
 
 const loginDriver = async (req, res) => {
     try {
         const { phone, password } = req.body;
-        const result = await pool.query(
-            `SELECT * FROM drivers WHERE phone = $1`, [phone]
-        );
+
+        if (runValidations(res, validatePhone(phone), validatePassword(password))) return;
+
+        const result = await pool.query(`SELECT * FROM drivers WHERE phone = $1`, [phone.trim()]);
+
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Driver not found" });
+            return res.status(401).json({ success: false, message: "Invalid credentials" });
         }
         const driver  = result.rows[0];
         const isMatch = await bcrypt.compare(password, driver.password);
@@ -42,20 +26,29 @@ const loginDriver = async (req, res) => {
         const token = jwt.sign(
             { id: driver.id, role: "driver" },
             process.env.JWT_SECRET,
-            { expiresIn: "7d" }
+            { expiresIn: "24h" }
         );
         res.status(200).json({ success: true, token });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Driver');
     }
 };
 
 const getDrivers = async (req, res) => {
     try {
-        const result = await pool.query(`SELECT * FROM drivers`);
-        res.status(200).json({ success: true, drivers: result.rows });
+        // Explicit column list — password is intentionally excluded.
+        // Even with auth protection this is defence-in-depth: the password
+        // hash can never leak through this endpoint regardless of future
+        // middleware changes.
+        const result = await pool.query(
+            `SELECT id, driver_name, phone, license_number,
+                    latitude, longitude, created_at
+             FROM drivers
+             ORDER BY id ASC`
+        );
+        res.status(200).json({ success: true, total: result.rows.length, drivers: result.rows });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Driver');
     }
 };
 
@@ -80,7 +73,7 @@ const getDriverProfile = async (req, res) => {
         }
         res.status(200).json({ success: true, driver: result.rows[0] });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Driver');
     }
 };
 
@@ -97,6 +90,11 @@ const updateLocation = async (req, res) => {
     try {
         const driverId          = req.driver.id;
         const { latitude, longitude } = req.body;
+
+        const coordError = validateCoordinates(latitude, longitude);
+        if (coordError) {
+            return res.status(400).json({ success: false, message: coordError });
+        }
 
         // Update driver's coordinates
         const result = await pool.query(
@@ -173,7 +171,7 @@ const updateLocation = async (req, res) => {
         });
 
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Driver');
     }
 };
 
@@ -225,12 +223,11 @@ const getRouteStops = async (req, res) => {
         });
 
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        safeErrorResponse(res, error, 'Driver');
     }
 };
 
 module.exports = {
-    registerDriver,
     getDrivers,
     loginDriver,
     getDriverProfile,
