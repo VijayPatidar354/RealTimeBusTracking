@@ -1,11 +1,11 @@
 const API_BASE_URL = import.meta.env.DEV
-  ? ''
-  : import.meta.env.VITE_API_BASE_URL || '';
+  ? ""
+  : import.meta.env.VITE_API_BASE_URL || "";
 
 class ApiError extends Error {
   constructor(message, status, payload) {
     super(message);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
     this.payload = payload;
   }
@@ -15,7 +15,7 @@ function buildUrl(path, params = {}) {
   const url = new URL(path, API_BASE_URL || window.location.origin);
 
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
+    if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, value);
     }
   });
@@ -31,7 +31,7 @@ async function request(path, options = {}) {
   const { params, ...fetchOptions } = options;
   const response = await fetch(buildUrl(path, params), {
     headers: {
-      Accept: 'application/json',
+      Accept: "application/json",
       ...fetchOptions.headers,
     },
     ...fetchOptions,
@@ -51,7 +51,7 @@ async function request(path, options = {}) {
 }
 
 export async function searchPassengerRoutes({ from, to }) {
-  return request('/api/passenger/search-route', {
+  return request("/api/passenger/search-route", {
     params: { from: from.trim(), to: to.trim() },
   });
 }
@@ -65,10 +65,10 @@ export async function getPassengerRoute(routeId) {
 }
 
 export async function registerPassengerWaiting({ routeId, stopId, token }) {
-  return request('/api/passenger/waiting', {
-    method: 'POST',
+  return request("/api/passenger/waiting", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
@@ -100,9 +100,9 @@ export async function registerWaitingAtStopName({ routeId, stopName, token }) {
 // waitingId = passenger_waiting.id returned from registerPassengerWaiting
 export async function confirmBoarded({ waitingId, token }) {
   return request(`/api/passenger/waiting/${waitingId}/board`, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
   });
@@ -112,7 +112,7 @@ export async function confirmBoarded({ waitingId, token }) {
 // waitingId = passenger_waiting.id returned from registerPassengerWaiting
 export async function cancelWaiting({ waitingId, token }) {
   return request(`/api/passenger/waiting/${waitingId}/cancel`, {
-    method: 'DELETE',
+    method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -122,15 +122,15 @@ export async function cancelWaiting({ waitingId, token }) {
 export { ApiError };
 
 export async function getAllRoutes() {
-  return request('/api/passenger/routes');
+  return request("/api/passenger/routes");
 }
 
 export async function getLiveBuses() {
-  return request('/api/passenger/buses/live');
+  return request("/api/passenger/buses/live");
 }
 
 export async function getMyWaiting({ token }) {
-  return request('/api/passenger/my-waiting', {
+  return request("/api/passenger/my-waiting", {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -138,5 +138,27 @@ export async function getMyWaiting({ token }) {
 export async function getMyTrips({ token, page = 1, limit = 20 }) {
   return request(`/api/passenger/my-trips?page=${page}&limit=${limit}`, {
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/**
+ * Find bus stops within `radiusMetres` of the passenger's GPS position.
+ * Returns stops sorted by actual PostGIS distance (nearest first).
+ *
+ * @param {{ lat: number, lon: number, radius?: number, limit?: number }} params
+ */
+export async function getNearestStops({ lat, lon, radius = 1000, limit = 10 }) {
+  return request("/api/passenger/stops/nearest", {
+    params: { lat, lon, radius, limit },
+  });
+}
+
+/**
+ * Quick search across route names, bus numbers, and stop names.
+ * @param {{ q: string }} params
+ */
+export async function quickSearch({ q }) {
+  return request("/api/passenger/quick-search", {
+    params: { q },
   });
 }

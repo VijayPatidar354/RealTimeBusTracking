@@ -79,8 +79,8 @@ function PassengerRegister() {
 
     setLoading(true);
     try {
-      await registerPassengerAccount(values);
-      setSuccess(`Verification code sent to ${values.email}`);
+      const result = await registerPassengerAccount(values);
+      setSuccess(result.message || `Verification code sent to ${values.email}`);
       setStep('otp');
       startTimer();
       setTimeout(() => setSuccess(''), 3000);
@@ -118,8 +118,8 @@ function PassengerRegister() {
     setSuccess('');
     setLoading(true);
     try {
-      await resendPassengerOtp({ email: values.email });
-      setSuccess(`Verification code resent to ${values.email}`);
+      const result = await resendPassengerOtp({ email: values.email });
+      setSuccess(result.message || `Verification code resent to ${values.email}`);
       startTimer();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {

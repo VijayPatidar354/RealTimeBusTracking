@@ -341,11 +341,22 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
         showToast(`🔄 Bus auto-assigned return trip: ${data.route_name}`, 'success');
       }
     };
+    const onStatusUpdated = (data) => {
+      setBuses((prev) =>
+        prev.map((b) =>
+          Number(b.bus_id) === Number(data.bus_id)
+            ? { ...b, status: data.status || data.bus_status }
+            : b
+        )
+      );
+    };
     socket.on('bus:location_updated', handler);
     socket.on('bus:route_assigned',   onRouteAssigned);
+    socket.on('bus:status_updated',   onStatusUpdated);
     return () => {
       socket.off('bus:location_updated', handler);
       socket.off('bus:route_assigned',   onRouteAssigned);
+      socket.off('bus:status_updated',   onStatusUpdated);
     };
   }, [load, showToast]);
 
@@ -404,7 +415,25 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
                   </div>
                   <div>
                     <p className="font-semibold text-ink-950 dark:text-white">{bus.bus_number}</p>
-                    <p className="text-xs text-ink-500">{bus.bus_type}</p>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <p className="text-xs text-ink-500">{bus.bus_type}</p>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                        bus.status === 'ACTIVE'      ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400' :
+                        bus.status === 'MAINTENANCE' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' :
+                        bus.status === 'INACTIVE'    ? 'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400' :
+                        bus.status === 'RETIRED'     ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' :
+                                                       'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400'
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${
+                          bus.status === 'ACTIVE'      ? 'bg-green-500' :
+                          bus.status === 'MAINTENANCE' ? 'bg-amber-500' :
+                          bus.status === 'INACTIVE'    ? 'bg-ink-400' :
+                          bus.status === 'RETIRED'     ? 'bg-rose-500' :
+                                                         'bg-ink-400'
+                        }`} />
+                        {bus.status || 'UNKNOWN'}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${

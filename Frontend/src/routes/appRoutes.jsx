@@ -7,6 +7,7 @@ import PassengerLogin from "../pages/passenger/PassengerLogin.jsx";
 import PassengerRegister from "../pages/passenger/PassengerRegister.jsx";
 import PassengerRouteMap from "../pages/passenger/PassengerRouteMap.jsx";
 import PassengerTrips from "../pages/passenger/PassengerTrips.jsx";
+import PassengerRouteDetail from "../pages/passenger/PassengerRouteDetail.jsx";
 import DriverLogin from "../pages/driver/DriverLogin.jsx";
 import DriverDashboard from "../pages/driver/DriverDashboard.jsx";
 import DriverRegister from "../pages/driver/DriverRegister.jsx";
@@ -68,6 +69,14 @@ export const appRoutes = [
     element: (
       <PassengerLayout>
         <PassengerTrips />
+      </PassengerLayout>
+    ),
+  },
+  {
+    path: "/passenger/route/:id",
+    element: (
+      <PassengerLayout>
+        <PassengerRouteDetail />
       </PassengerLayout>
     ),
   },

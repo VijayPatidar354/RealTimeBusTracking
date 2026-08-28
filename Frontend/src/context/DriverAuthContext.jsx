@@ -26,6 +26,7 @@ export function DriverAuthProvider({ children }) {
     return registerDriver({
       driver_name: values.driverName,
       phone: values.phone,
+      email: values.email,
       license_number: values.licenseNumber,
       password: values.password,
     });
