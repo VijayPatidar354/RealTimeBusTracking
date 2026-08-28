@@ -12,7 +12,7 @@
 -- ================================================================
 
 -- ── Extensions ───────────────────────────────────────────────────
--- None required for core schema (uuid-ossp optional for future use)
+CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- ── ADMINS ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS admins (
@@ -42,8 +42,11 @@ CREATE TABLE IF NOT EXISTS drivers (
     password        VARCHAR(255)    NOT NULL,
     latitude        NUMERIC(10, 7)  DEFAULT NULL,  -- live GPS lat
     longitude       NUMERIC(10, 7)  DEFAULT NULL,  -- live GPS lon
+    location        GEOGRAPHY(POINT, 4326) DEFAULT NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_drivers_location ON drivers USING GIST (location);
 
 -- ── PASSENGERS ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS passengers (
@@ -77,10 +80,12 @@ CREATE TABLE IF NOT EXISTS stops (
     stop_order  INTEGER         NOT NULL,   -- 1-based sequential position
     stop_lat    NUMERIC(10, 7)  DEFAULT NULL,
     stop_lon    NUMERIC(10, 7)  DEFAULT NULL,
+    location    GEOGRAPHY(POINT, 4326) DEFAULT NULL,
     UNIQUE (route_id, stop_order)           -- no duplicate positions on a route
 );
 
 CREATE INDEX IF NOT EXISTS idx_stops_route ON stops(route_id);
+CREATE INDEX IF NOT EXISTS idx_stops_location ON stops USING GIST (location);
 
 -- ── BUSES ────────────────────────────────────────────────────────
 -- A bus belongs to an owner. A driver and route are optionally assigned.
@@ -93,6 +98,8 @@ CREATE TABLE IF NOT EXISTS buses (
     owner_id            INTEGER       NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
     driver_id           INTEGER       DEFAULT NULL REFERENCES drivers(id) ON DELETE SET NULL,
     route_id            INTEGER       DEFAULT NULL REFERENCES routes(id) ON DELETE SET NULL,
+    status              VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'INACTIVE', 'MAINTENANCE', 'RETIRED')),
     current_stop_order  INTEGER       NOT NULL DEFAULT 1,
     current_speed_kmph  INTEGER       DEFAULT NULL,  -- smoothed speed from ETA service
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW()
@@ -101,6 +108,9 @@ CREATE TABLE IF NOT EXISTS buses (
 CREATE INDEX IF NOT EXISTS idx_buses_owner  ON buses(owner_id);
 CREATE INDEX IF NOT EXISTS idx_buses_driver ON buses(driver_id);
 CREATE INDEX IF NOT EXISTS idx_buses_route  ON buses(route_id);
+CREATE INDEX IF NOT EXISTS idx_buses_status ON buses(status);
+CREATE INDEX IF NOT EXISTS idx_buses_active_route ON buses(route_id)
+    WHERE status = 'ACTIVE';
 
 -- ── PASSENGER WAITING ─────────────────────────────────────────────
 -- Passengers register here when waiting at a stop.

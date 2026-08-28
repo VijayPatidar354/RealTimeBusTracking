@@ -8,7 +8,8 @@ const REQUIRED_ENV = [
   "DB_NAME",
   "DB_PASSWORD",
   "DB_PORT",
-  "RESEND_API_KEY",
+  "BREVO_API_KEY",
+  "BREVO_SENDER_EMAIL",
 ];
 const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missingEnv.length > 0) {

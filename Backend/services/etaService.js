@@ -47,6 +47,7 @@
 const pool                   = require('../config/db');
 const { getIO }              = require('../socket');
 const { haversineDistance }   = require('../utils/haversine');
+const { BUS_STATUSES }       = require('../utils/busStatus');
 
 // ── Configurable constants ───────────────────────────────────────
 const DEFAULT_BUS_SPEED_KMPH = 30;                          // fallback speed
@@ -151,8 +152,8 @@ function recordGPSUpdate(busId, latitude, longitude, timestamp) {
         const smoothedKmph = Math.round(getSmoothedSpeed(busId) * 3.6);
         // Fire-and-forget: non-blocking, errors logged but not thrown
         pool.query(
-            `UPDATE buses SET current_speed_kmph = $1 WHERE id = $2`,
-            [smoothedKmph, busId]
+            `UPDATE buses SET current_speed_kmph = $1 WHERE id = $2 AND status = $3`,
+            [smoothedKmph, busId, BUS_STATUSES.ACTIVE]
         ).catch(err => console.error('[ETA] DB speed write failed:', err.message));
     }
 }
@@ -340,6 +341,7 @@ async function generateETAPayload(busId, routeId) {
     const busResult = await pool.query(
         `SELECT b.id           AS bus_id,
                 b.route_id,
+                b.status,
                 b.current_stop_order,
                 COALESCE(b.current_speed_kmph, $3)::INTEGER AS persisted_speed_kmph,
                 d.latitude,
@@ -348,6 +350,7 @@ async function generateETAPayload(busId, routeId) {
          LEFT JOIN drivers d ON b.driver_id = d.id
          WHERE  b.id       = $1
            AND  b.route_id = $2
+           AND  b.status   = 'ACTIVE'
          LIMIT  1`,
         [busId, routeId, DEFAULT_BUS_SPEED_KMPH]
     );

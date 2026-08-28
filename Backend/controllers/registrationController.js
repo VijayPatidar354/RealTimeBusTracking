@@ -177,11 +177,14 @@ function initiateRegistration(role) {
             );
 
             // ── Send OTP email ──
-            await sendOtpEmail(email, otpCode);
+            const emailResult = await sendOtpEmail(email, otpCode);
 
             res.status(200).json({
                 success: true,
-                message: 'Verification code sent to your email. Please check your inbox.',
+                message: emailResult.delivered
+                    ? 'Verification code sent to your email. Please check your inbox.'
+                    : 'Verification code generated. Email delivery failed in development; check the backend console for the code.',
+                email_delivered: emailResult.delivered,
             });
         } catch (error) {
             safeErrorResponse(res, error, `initiateRegistration(${role})`);
@@ -315,11 +318,14 @@ function resendOtp(role) {
                 [otpCode, expiresAt, cleanEmail, role],
             );
 
-            await sendOtpEmail(cleanEmail, otpCode);
+            const emailResult = await sendOtpEmail(cleanEmail, otpCode);
 
             res.status(200).json({
                 success: true,
-                message: 'New verification code sent to your email.',
+                message: emailResult.delivered
+                    ? 'New verification code sent to your email.'
+                    : 'New verification code generated. Email delivery failed in development; check the backend console for the code.',
+                email_delivered: emailResult.delivered,
             });
         } catch (error) {
             safeErrorResponse(res, error, `resendOtp(${role})`);

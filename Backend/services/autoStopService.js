@@ -45,8 +45,8 @@
 
 const pool                  = require('../config/db');
 const { getIO }             = require('../socket');
-const { haversineDistance }  = require('../utils/haversine');
 const { clearBusState }     = require('./etaService');
+const { BUS_STATUSES }      = require('../utils/busStatus');
 
 // ── Configurable geofence radius (metres) ────────────────────────
 const GEOFENCE_RADIUS_METRES = parseInt(process.env.GEOFENCE_RADIUS || '50', 10);
@@ -77,6 +77,45 @@ async function fetchNextStopWithCoords(routeId, currentStopOrder) {
 }
 
 // ================================================================
+//  HELPER — checkStopGeofence
+//  Uses PostGIS geography distance so geofence checks happen in the
+//  database and can use the stops.location GiST index when present.
+// ================================================================
+async function checkStopGeofence(stopId, latitude, longitude, radiusMetres) {
+    const result = await pool.query(
+        `
+        WITH stop_point AS (
+            SELECT COALESCE(
+                location,
+                ST_SetSRID(
+                    ST_MakePoint(stop_lon::DOUBLE PRECISION, stop_lat::DOUBLE PRECISION),
+                    4326
+                )::geography
+            ) AS point
+            FROM stops
+            WHERE id = $1
+              AND stop_lat IS NOT NULL
+              AND stop_lon IS NOT NULL
+            LIMIT 1
+        ),
+        bus_point AS (
+            SELECT ST_SetSRID(
+                ST_MakePoint($3::DOUBLE PRECISION, $2::DOUBLE PRECISION),
+                4326
+            )::geography AS point
+        )
+        SELECT
+            ST_DWithin(stop_point.point, bus_point.point, $4::DOUBLE PRECISION) AS is_inside,
+            ST_Distance(stop_point.point, bus_point.point) AS distance_metres
+        FROM stop_point, bus_point
+        `,
+        [stopId, latitude, longitude, radiusMetres]
+    );
+
+    return result.rows.length > 0 ? result.rows[0] : null;
+}
+
+// ================================================================
 //  HELPER — fetchMaxStopOrder
 //  Returns the highest stop_order for the given route.
 // ================================================================
@@ -94,7 +133,7 @@ async function fetchMaxStopOrder(routeId) {
 // ================================================================
 async function getNextStopInfo(routeId, stopOrder) {
     const stopResult = await pool.query(
-        `SELECT id AS stop_id, stop_name, stop_order
+        `SELECT id AS stop_id, stop_name, stop_order, stop_lat, stop_lon
          FROM   stops
          WHERE  route_id   = $1
            AND  stop_order = $2
@@ -115,6 +154,8 @@ async function getNextStopInfo(routeId, stopOrder) {
         stop_id:         stop.stop_id,
         next_stop_name:  stop.stop_name,
         next_stop_order: stop.stop_order,
+        stop_lat:        stop.stop_lat,
+        stop_lon:        stop.stop_lon,
         waiting_count:   countResult.rows[0].waiting_count
     };
 }
@@ -185,7 +226,8 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
         `SELECT b.id           AS bus_id,
                 b.route_id,
                 b.current_stop_order,
-                b.owner_id
+                b.owner_id,
+                b.status
          FROM   buses b
          WHERE  b.driver_id = $1
          LIMIT  1`,
@@ -194,9 +236,13 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
 
     if (busResult.rows.length === 0) return; // driver has no bus
 
-    const { bus_id, route_id, current_stop_order, owner_id } = busResult.rows[0];
+    const { bus_id, route_id, current_stop_order, owner_id, status } = busResult.rows[0];
 
     if (!route_id) return; // bus has no route
+    if (status !== BUS_STATUSES.ACTIVE) {
+        clearBusState(bus_id);
+        return;
+    }
 
     // ── 2. Trip completion guard ──────────────────────────────────
     const maxOrder = await fetchMaxStopOrder(route_id);
@@ -235,19 +281,21 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
             return;
         }
 
-        // ── 6. Haversine distance check (synchronous) ────────────
-        const distMetres = haversineDistance(
-            parseFloat(latitude),
-            parseFloat(longitude),
-            parseFloat(nextStop.stop_lat),
-            parseFloat(nextStop.stop_lon)
+        // ── 6. PostGIS geofence distance check ──────────────────
+        const geofence = await checkStopGeofence(
+            nextStop.stop_id,
+            latitude,
+            longitude,
+            GEOFENCE_RADIUS_METRES
         );
 
-        if (distMetres > GEOFENCE_RADIUS_METRES) {
+        if (!geofence || !geofence.is_inside) {
             // Not in geofence yet — release so the next ping retries.
             triggeredStops.delete(bus_id);
             return;
         }
+
+        const distMetres = Number(geofence.distance_metres);
 
         // ── IN GEOFENCE — execute full progression pipeline ──────
         console.log(

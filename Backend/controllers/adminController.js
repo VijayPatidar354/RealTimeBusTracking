@@ -60,18 +60,26 @@ const getSystemStats = async (req, res) => {
         const result = await pool.query(`
             SELECT
                 (SELECT COUNT(*)::INTEGER FROM buses)                           AS total_buses,
-                (SELECT COUNT(*)::INTEGER FROM buses WHERE driver_id IS NOT NULL
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE status = 'ACTIVE')    AS active_buses,
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE status = 'INACTIVE')  AS inactive_buses,
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE status = 'MAINTENANCE') AS maintenance_buses,
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE status = 'RETIRED')   AS retired_buses,
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE status = 'ACTIVE'
+                    AND driver_id IS NOT NULL
                     AND id IN (SELECT DISTINCT bus_id FROM (
                         SELECT b.id AS bus_id FROM buses b
                         JOIN drivers d ON b.driver_id = d.id
-                        WHERE d.latitude IS NOT NULL
+                        WHERE b.status = 'ACTIVE'
+                          AND d.latitude IS NOT NULL
+                          AND d.longitude IS NOT NULL
                     ) sub))                                                     AS live_buses,
                 (SELECT COUNT(*)::INTEGER FROM drivers)                         AS total_drivers,
                 (SELECT COUNT(*)::INTEGER FROM routes)                          AS total_routes,
                 (SELECT COUNT(*)::INTEGER FROM passengers)                      AS total_passengers,
                 (SELECT COUNT(*)::INTEGER FROM owners)                          AS total_owners,
                 (SELECT COUNT(*)::INTEGER FROM passenger_waiting)               AS active_waiting,
-                (SELECT COUNT(*)::INTEGER FROM buses WHERE driver_id IS NULL)   AS idle_buses
+                (SELECT COUNT(*)::INTEGER FROM buses WHERE driver_id IS NULL
+                    AND status <> 'RETIRED')                                     AS idle_buses
         `);
         res.status(200).json({ success: true, stats: result.rows[0] });
     } catch (error) {
@@ -91,6 +99,7 @@ const getAllBuses = async (req, res) => {
                 b.id          AS bus_id,
                 b.bus_number,
                 b.bus_type,
+                b.status AS bus_status,
                 b.current_stop_order,
                 b.route_id,
                 r.route_name,
@@ -132,6 +141,7 @@ const getAllDrivers = async (req, res) => {
                 b.id          AS bus_id,
                 b.bus_number,
                 b.bus_type,
+                b.status      AS bus_status,
                 r.id          AS route_id,
                 r.route_name,
                 r.source,
@@ -159,6 +169,7 @@ const getSingleDriver = async (req, res) => {
                 d.id, d.driver_name, d.phone, d.license_number,
                 d.latitude, d.longitude,
                 b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+                b.status AS bus_status,
                 r.id AS route_id, r.route_name, r.source, r.destination
             FROM drivers d
             LEFT JOIN buses  b ON d.id = b.driver_id

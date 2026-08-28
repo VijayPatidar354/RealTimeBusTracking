@@ -1,6 +1,10 @@
 const pool = require('../config/db');
 const { getIO } = require('../socket');
-const { safeErrorResponse } = require('../utils/validators');
+const { safeErrorResponse, validateCoordinates, validateId } = require('../utils/validators');
+const { pointExpression } = require('../utils/spatialSql');
+const etaService = require('../services/etaService');
+const { BUS_STATUSES } = require('../utils/busStatus');
+const { runValidations } = require('../utils/runValidations');
 
 const createRoute = async (req, res) => {
     try {
@@ -47,6 +51,12 @@ const addStop = async (req, res) => {
             (stop_lat === undefined && stop_lon !== undefined)) {
             return res.status(400).json({ success: false, message: "Provide both stop_lat and stop_lon, or neither" });
         }
+        if (stop_lat !== undefined && stop_lon !== undefined) {
+            const coordError = validateCoordinates(stop_lat, stop_lon);
+            if (coordError) {
+                return res.status(400).json({ success: false, message: coordError });
+            }
+        }
 
         const routeCheck = await pool.query(
             `SELECT id FROM routes WHERE id = $1 AND owner_id = $2`, [routeId, ownerId]
@@ -56,10 +66,16 @@ const addStop = async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO stops (route_id, stop_name, stop_order, stop_lat, stop_lon)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO stops (route_id, stop_name, stop_order, stop_lat, stop_lon, location)
+             VALUES (
+                $1, $2, $3, $4, $5,
+                CASE
+                    WHEN $4::NUMERIC IS NULL OR $5::NUMERIC IS NULL THEN NULL
+                    ELSE ${pointExpression('$4', '$5')}
+                END
+             )
              RETURNING id, route_id, stop_name, stop_order, stop_lat, stop_lon`,
-            [routeId, stop_name, stop_order, stop_lat || null, stop_lon || null]
+            [routeId, stop_name, stop_order, stop_lat ?? null, stop_lon ?? null]
         );
         res.status(201).json({ success: true, stop: result.rows[0] });
     } catch (error) {
@@ -106,7 +122,7 @@ const getMyRouteById = async (req, res) => {
              FROM stops WHERE route_id = $1 ORDER BY stop_order ASC`, [id]
         );
         const busesResult = await pool.query(
-            `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+            `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b
@@ -130,17 +146,20 @@ const assignRoute = async (req, res) => {
         const ownerId      = req.owner.ownerId;
         const { busId }    = req.params;
         const { route_id } = req.body;
+        if (runValidations(res, validateId(busId, "Bus ID"))) return;
         if (!route_id) {
             return res.status(400).json({ success: false, message: "route_id is required" });
         }
+        if (runValidations(res, validateId(route_id, "route_id"))) return;
         // Fetch bus and its current route (to clean up stale waiting records later)
         const busCheck = await pool.query(
-            `SELECT id, route_id AS old_route_id FROM buses WHERE id = $1 AND owner_id = $2`, [busId, ownerId]
+            `SELECT id, route_id AS old_route_id, status FROM buses WHERE id = $1 AND owner_id = $2`, [busId, ownerId]
         );
         if (busCheck.rows.length === 0) {
             return res.status(404).json({ success: false, message: "Bus not found or does not belong to you" });
         }
         const oldRouteId = busCheck.rows[0].old_route_id;
+        const oldStatus = busCheck.rows[0].status;
         const routeCheck = await pool.query(
             `SELECT id, route_name, source, destination FROM routes WHERE id = $1 AND owner_id = $2`,
             [route_id, ownerId]
@@ -150,17 +169,18 @@ const assignRoute = async (req, res) => {
         }
         const result = await pool.query(
             `UPDATE buses SET route_id = $1, current_stop_order = 1 WHERE id = $2
-             RETURNING id, bus_number, bus_type, owner_id, driver_id, route_id, current_stop_order`,
+             RETURNING id, bus_number, bus_type, owner_id, driver_id, route_id, status, current_stop_order`,
             [route_id, busId]
         );
+        etaService.clearBusState(result.rows[0].id);
 
         // ── Clean up stale passenger_waiting for the old route ──
-        // Only delete if this was the ONLY bus on the old route.
+        // Only delete if this was the only active bus on the old route.
         // If other buses remain, those waiting records are still valid for them.
-        if (oldRouteId && oldRouteId !== parseInt(route_id)) {
+        if (oldRouteId && oldRouteId !== parseInt(route_id) && oldStatus === BUS_STATUSES.ACTIVE) {
             const otherBusesResult = await pool.query(
-                `SELECT id FROM buses WHERE route_id = $1 AND id != $2 LIMIT 1`,
-                [oldRouteId, busId]
+                `SELECT id FROM buses WHERE route_id = $1 AND id != $2 AND status = $3 LIMIT 1`,
+                [oldRouteId, busId, BUS_STATUSES.ACTIVE]
             );
             if (otherBusesResult.rows.length === 0) {
                 await pool.query(
@@ -174,12 +194,15 @@ const assignRoute = async (req, res) => {
         const payload = {
             event: 'bus:route_assigned',
             bus_id: bus.id, bus_number: bus.bus_number, bus_type: bus.bus_type,
+            bus_status: bus.status,
             route_id: bus.route_id, route_name: route.route_name,
             source: route.source, destination: route.destination,
             current_stop_order: 1, owner_id: ownerId,
             timestamp: new Date().toISOString()
         };
-        getIO().to(`route:${route_id}`).emit('bus:route_assigned', payload);
+        if (bus.status === BUS_STATUSES.ACTIVE) {
+            getIO().to(`route:${route_id}`).emit('bus:route_assigned', payload);
+        }
         getIO().to(`owner:${ownerId}`).emit('bus:route_assigned',  payload);
         getIO().to('admin').emit('bus:route_assigned',              payload);
         res.status(200).json({ success: true, message: "Route assigned — bus progression reset to stop 1", bus, route });
@@ -224,7 +247,7 @@ const adminGetRouteById = async (req, res) => {
              FROM stops WHERE route_id = $1 ORDER BY stop_order ASC`, [id]
         );
         const busesResult = await pool.query(
-            `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+            `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b

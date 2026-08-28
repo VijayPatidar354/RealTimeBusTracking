@@ -10,9 +10,12 @@ const {
   validatePassword,
   validateName,
   validateId,
+  validateCoordinates,
   safeErrorResponse,
 } = require("../utils/validators");
 const { runValidations } = require("../utils/runValidations");
+const { BUS_STATUSES, busNotActiveResponse } = require("../utils/busStatus");
+const { dWithinExpression, distanceExpression } = require("../utils/spatialSql");
 
 // ================================================================
 //  SHARED HELPER — getNextStopInfo
@@ -120,7 +123,7 @@ const getAllRoutes = async (req, res) => {
                     COUNT(DISTINCT b.id)::INTEGER AS total_buses
              FROM routes r
              LEFT JOIN stops s ON r.id = s.route_id
-             LEFT JOIN buses b ON r.id = b.route_id
+             LEFT JOIN buses b ON r.id = b.route_id AND b.status = 'ACTIVE'
              GROUP BY r.id ORDER BY r.id ASC`,
     );
     res
@@ -150,12 +153,12 @@ const getRouteById = async (req, res) => {
       [id],
     );
     const busesResult = await pool.query(
-      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b
              LEFT JOIN drivers d ON b.driver_id = d.id
-             WHERE b.route_id = $1 ORDER BY b.id ASC`,
+             WHERE b.route_id = $1 AND b.status = 'ACTIVE' ORDER BY b.id ASC`,
       [id],
     );
     res.status(200).json({
@@ -177,13 +180,14 @@ const getRouteById = async (req, res) => {
 const getLiveBuses = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     r.id AS route_id, r.route_name, r.source, r.destination,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b
              JOIN  routes  r ON b.route_id  = r.id
              LEFT JOIN drivers d ON b.driver_id = d.id
+             WHERE b.status = 'ACTIVE'
              ORDER BY b.id ASC`,
     );
     res
@@ -213,12 +217,12 @@ const getBusesNearStop = async (req, res) => {
     }
     const stop = stopResult.rows[0];
     const busesResult = await pool.query(
-      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b
              LEFT JOIN drivers d ON b.driver_id = d.id
-             WHERE b.route_id = $1 ORDER BY b.id ASC`,
+             WHERE b.route_id = $1 AND b.status = 'ACTIVE' ORDER BY b.id ASC`,
       [stop.route_id],
     );
     res.status(200).json({
@@ -248,14 +252,14 @@ const getBusById = async (req, res) => {
     if (runValidations(res, validateId(id, "Bus ID"))) return;
 
     const busResult = await pool.query(
-      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.current_stop_order,
+      `SELECT b.id AS bus_id, b.bus_number, b.bus_type, b.status AS bus_status, b.current_stop_order,
                     r.id AS route_id, r.route_name, r.source, r.destination,
                     d.id AS driver_id, d.driver_name, d.phone AS driver_phone,
                     d.latitude, d.longitude
              FROM buses b
              LEFT JOIN routes  r ON b.route_id  = r.id
              LEFT JOIN drivers d ON b.driver_id = d.id
-             WHERE b.id = $1`,
+             WHERE b.id = $1 AND b.status = 'ACTIVE'`,
       [id],
     );
     if (busResult.rows.length === 0) {
@@ -276,6 +280,7 @@ const getBusById = async (req, res) => {
         bus_id: bus.bus_id,
         bus_number: bus.bus_number,
         bus_type: bus.bus_type,
+        bus_status: bus.bus_status,
         current_stop_order: bus.current_stop_order,
         live_location: { latitude: bus.latitude, longitude: bus.longitude },
         driver: {
@@ -344,10 +349,16 @@ const registerWaiting = async (req, res) => {
                 COUNT(id)::INTEGER                                          AS total_active,
                 COUNT(CASE WHEN current_stop_order > $2 THEN 1 END)::INTEGER AS already_passed
              FROM buses
-             WHERE route_id = $1 AND driver_id IS NOT NULL`,
+             WHERE route_id = $1 AND driver_id IS NOT NULL AND status = 'ACTIVE'`,
       [route_id, stop.stop_order],
     );
     const { total_active, already_passed } = busStatusResult.rows[0];
+    if (total_active === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No active buses are currently operating on this route",
+      });
+    }
     if (total_active > 0 && already_passed === total_active) {
       return res.status(400).json({
         success: false,
@@ -393,7 +404,7 @@ const registerWaiting = async (req, res) => {
 
     const busesOnRoute = await pool.query(
       `SELECT b.driver_id, b.id AS bus_id, b.current_stop_order
-             FROM buses b WHERE b.route_id = $1 AND b.driver_id IS NOT NULL`,
+             FROM buses b WHERE b.route_id = $1 AND b.driver_id IS NOT NULL AND b.status = 'ACTIVE'`,
       [route_id],
     );
 
@@ -495,7 +506,7 @@ const driverGetWaitingCounts = async (req, res) => {
   try {
     const driverId = req.driver.id;
     const busResult = await pool.query(
-      `SELECT b.id AS bus_id, b.route_id, b.current_stop_order, r.route_name
+      `SELECT b.id AS bus_id, b.bus_number, b.status, b.route_id, b.current_stop_order, r.route_name
              FROM buses b
              LEFT JOIN routes r ON b.route_id = r.id
              WHERE b.driver_id = $1 LIMIT 1`,
@@ -505,6 +516,9 @@ const driverGetWaitingCounts = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "No bus or route assigned to you" });
+    }
+    if (busResult.rows[0].status !== BUS_STATUSES.ACTIVE) {
+      return busNotActiveResponse(res, busResult.rows[0]);
     }
     const { bus_id, route_id, current_stop_order, route_name } =
       busResult.rows[0];
@@ -553,7 +567,7 @@ const driverGetAllWaiting = async (req, res) => {
     const driverId = req.driver.id;
 
     const busResult = await pool.query(
-      `SELECT b.id AS bus_id, b.route_id, b.current_stop_order,
+      `SELECT b.id AS bus_id, b.bus_number, b.status, b.route_id, b.current_stop_order,
                     r.route_name, r.source, r.destination
              FROM buses b
              LEFT JOIN routes r ON b.route_id = r.id
@@ -565,6 +579,9 @@ const driverGetAllWaiting = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "No bus or route assigned to you" });
+    }
+    if (busResult.rows[0].status !== BUS_STATUSES.ACTIVE) {
+      return busNotActiveResponse(res, busResult.rows[0]);
     }
 
     const {
@@ -627,7 +644,7 @@ const markStopReached = async (req, res) => {
     if (runValidations(res, validateId(stop_id, "stop_id"))) return;
 
     const busResult = await pool.query(
-      `SELECT b.id AS bus_id, b.route_id, b.current_stop_order, o.id AS owner_id
+      `SELECT b.id AS bus_id, b.bus_number, b.status, b.route_id, b.current_stop_order, o.id AS owner_id
              FROM buses b
              LEFT JOIN owners o ON b.owner_id = o.id
              WHERE b.driver_id = $1 LIMIT 1`,
@@ -637,6 +654,9 @@ const markStopReached = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "No bus or route assigned to you" });
+    }
+    if (busResult.rows[0].status !== BUS_STATUSES.ACTIVE) {
+      return busNotActiveResponse(res, busResult.rows[0]);
     }
     const { bus_id, route_id, current_stop_order, owner_id } =
       busResult.rows[0];
@@ -891,6 +911,7 @@ const markStopReached = async (req, res) => {
       `UPDATE buses SET route_id = $1, current_stop_order = 1 WHERE id = $2`,
       [reverseRouteId, bus_id],
     );
+    etaService.clearBusState(bus_id);
 
     const firstStopResult = await pool.query(
       `SELECT s.id AS stop_id, s.stop_name, s.stop_order,
@@ -919,6 +940,7 @@ const markStopReached = async (req, res) => {
       bus_id,
       route_id: reverseRouteId,
       route_name: reverseRouteName,
+      bus_status: BUS_STATUSES.ACTIVE,
       source: reverseSource,
       destination: reverseDestination,
       auto_reversed: true,
@@ -989,6 +1011,7 @@ const getRouteETA = async (req, res) => {
              FROM   buses b
              JOIN   drivers d ON b.driver_id = d.id
              WHERE  b.route_id = $1
+               AND  b.status = 'ACTIVE'
                AND  d.latitude IS NOT NULL
                AND  d.longitude IS NOT NULL
              ORDER BY b.id ASC
@@ -1093,6 +1116,7 @@ const searchRoute = async (req, res) => {
                  FROM   buses b
                  JOIN   drivers d ON b.driver_id = d.id
                  WHERE  b.route_id = $1
+                   AND  b.status = 'ACTIVE'
                    AND  d.latitude  IS NOT NULL
                    AND  d.longitude IS NOT NULL
                  ORDER BY b.id ASC`,
@@ -1239,7 +1263,7 @@ const boardBus = async (req, res) => {
 
     const busesOnRoute = await pool.query(
       `SELECT driver_id, id AS bus_id, current_stop_order
-             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL AND status = 'ACTIVE'`,
       [row.route_id],
     );
 
@@ -1343,7 +1367,7 @@ async function autoExpireWaiting() {
 
       const busesOnRoute = await pool.query(
         `SELECT driver_id, current_stop_order
-                 FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+                 FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL AND status = 'ACTIVE'`,
         [route_id],
       );
 
@@ -1438,7 +1462,7 @@ const cancelWaiting = async (req, res) => {
 
     const busesOnRoute = await pool.query(
       `SELECT driver_id, id AS bus_id, current_stop_order
-             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL`,
+             FROM buses WHERE route_id = $1 AND driver_id IS NOT NULL AND status = 'ACTIVE'`,
       [row.route_id],
     );
 
@@ -1553,11 +1577,166 @@ const getMyTrips = async (req, res) => {
 };
 
 // Start the job — runs every 60 seconds
+// Start the job � runs every 60 seconds
 setInterval(autoExpireWaiting, 60 * 1000);
+
+// ================================================================
+//  PASSENGER: GET NEAREST BUS STOPS
+//  GET /api/passenger/stops/nearest?lat=&lon=&radius=&limit=
+//
+//  Uses PostGIS ST_DWithin + GIST index on stops.location for fast
+//  radius queries.  Radius clamped to 50 m � 5 km.
+// ================================================================
+const MAX_RADIUS_METRES     = 5000;
+const DEFAULT_RADIUS_METRES = 1000;
+const DEFAULT_LIMIT         = 10;
+const WALK_SPEED_KMH        = 5; // used for walking-time estimate
+
+const getNearestStops = async (req, res) => {
+  try {
+    const { lat, lon } = req.query;
+    const rawRadius = req.query.radius != null ? Number(req.query.radius) : DEFAULT_RADIUS_METRES;
+    const rawLimit  = req.query.limit  != null ? Number(req.query.limit)  : DEFAULT_LIMIT;
+
+    const coordError = validateCoordinates(lat, lon);
+    if (coordError) {
+      return res.status(400).json({ success: false, message: coordError });
+    }
+
+    const latitude  = parseFloat(lat);
+    const longitude = parseFloat(lon);
+
+    // Clamp radius to [50, MAX_RADIUS_METRES]
+    const radius = Math.min(
+      MAX_RADIUS_METRES,
+      Math.max(50, isNaN(rawRadius) ? DEFAULT_RADIUS_METRES : rawRadius),
+    );
+    // Clamp limit to [1, 30]
+    const limit = Math.min(
+      30,
+      Math.max(1, isNaN(rawLimit) ? DEFAULT_LIMIT : Math.floor(rawLimit)),
+    );
+
+    // ST_DWithin leverages the GIST index on stops.location.
+    // active_buses only counts ACTIVE buses so INACTIVE/MAINTENANCE/RETIRED
+    // buses are excluded from the count.
+    const result = await pool.query(
+      `SELECT
+           s.id                             AS stop_id,
+           s.stop_name,
+           s.stop_order,
+           s.stop_lat,
+           s.stop_lon,
+           s.route_id,
+           r.route_name,
+           r.source,
+           r.destination,
+           ROUND(${distanceExpression('s.location', '$1', '$2')}::NUMERIC, 0)::INTEGER
+                                            AS distance_metres,
+           COUNT(DISTINCT b.id)::INTEGER    AS active_buses,
+           COUNT(DISTINCT pw.id)::INTEGER   AS waiting_count
+        FROM   stops   s
+        JOIN   routes  r   ON r.id = s.route_id
+        LEFT JOIN buses b
+               ON  b.route_id = s.route_id
+              AND  b.status   = 'ACTIVE'
+        LEFT JOIN passenger_waiting pw
+               ON  pw.stop_id  = s.id
+              AND  pw.route_id = s.route_id
+        WHERE  s.location IS NOT NULL
+          AND  ${dWithinExpression('s.location', '$1', '$2', '$3')}
+        GROUP  BY s.id, r.id,
+                  ${distanceExpression('s.location', '$1', '$2')}
+        ORDER  BY ${distanceExpression('s.location', '$1', '$2')} ASC
+        LIMIT  $4`,
+      [latitude, longitude, radius, limit],
+    );
+
+    const walkSpeedMperMin = (WALK_SPEED_KMH * 1000) / 60;
+
+    const stops = result.rows.map((row) => ({
+      stop_id:         row.stop_id,
+      stop_name:       row.stop_name,
+      stop_order:      row.stop_order,
+      stop_lat:        row.stop_lat !== null ? parseFloat(row.stop_lat) : null,
+      stop_lon:        row.stop_lon !== null ? parseFloat(row.stop_lon) : null,
+      route_id:        row.route_id,
+      route_name:      row.route_name,
+      source:          row.source,
+      destination:     row.destination,
+      distance_metres: row.distance_metres,
+      walk_minutes:    Math.ceil(row.distance_metres / walkSpeedMperMin),
+      active_buses:    row.active_buses,
+      waiting_count:   row.waiting_count,
+    }));
+
+    res.status(200).json({
+      success: true,
+      passenger_location: { latitude, longitude },
+      radius_metres: radius,
+      total: stops.length,
+      stops,
+    });
+  } catch (error) {
+    safeErrorResponse(res, error, "getNearestStops");
+  }
+};
+
+
+// ================================================================
+//  PASSENGER: QUICK SEARCH (by route name, bus number, or stop name)
+// ================================================================
+const quickSearch = async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q || q.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query must be at least 2 characters.',
+      });
+    }
+    const pattern = '%' + q + '%';
+    const result = await pool.query(
+      `SELECT DISTINCT
+              r.id          AS route_id,
+              r.route_name,
+              r.source,
+              r.destination,
+              COUNT(DISTINCT s.id)::INTEGER AS total_stops,
+              COUNT(DISTINCT b.id)::INTEGER AS active_buses,
+              CASE
+                WHEN r.route_name ILIKE $1 THEN 'route'
+                WHEN EXISTS (SELECT 1 FROM buses bb WHERE bb.route_id = r.id AND bb.bus_number ILIKE $1 AND bb.status = 'ACTIVE') THEN 'bus'
+                ELSE 'stop'
+              END AS match_type
+       FROM   routes r
+       LEFT JOIN stops s ON r.id = s.route_id
+       LEFT JOIN buses b ON r.id = b.route_id AND b.status = 'ACTIVE'
+       WHERE  r.route_name ILIKE $1
+          OR  EXISTS (SELECT 1 FROM buses bb WHERE bb.route_id = r.id AND bb.bus_number ILIKE $1 AND bb.status = 'ACTIVE')
+          OR  EXISTS (SELECT 1 FROM stops ss WHERE ss.route_id = r.id AND ss.stop_name ILIKE $1)
+       GROUP BY r.id
+       ORDER BY
+         CASE WHEN r.route_name ILIKE $1 THEN 0 ELSE 1 END,
+         r.route_name ASC
+       LIMIT 20`,
+      [pattern]
+    );
+    res.status(200).json({
+      success: true,
+      query: q,
+      total: result.rows.length,
+      results: result.rows,
+    });
+  } catch (error) {
+    safeErrorResponse(res, error, 'quickSearch');
+  }
+};
 
 module.exports = {
   loginPassenger,
   getAllRoutes,
+  quickSearch,
   getRouteById,
   getLiveBuses,
   getBusesNearStop,
@@ -1573,4 +1752,5 @@ module.exports = {
   getMyTrips,
   getRouteETA,
   searchRoute,
+  getNearestStops,
 };
