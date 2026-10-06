@@ -120,6 +120,11 @@ export function mergeEtaIntoRoutes(routes, etaUpdate) {
       (stop) => stop.stop_name === destinationStop,
     );
 
+    // If upcoming_stops has data but the source stop is NOT in it,
+    // the bus has already passed the passenger's boarding stop.
+    // Set eta to null so the UI can show "Bus passed" instead of a stale time.
+    const busPassedSource = upcomingStops.length > 0 && !sourceEta;
+
     const mergeBus = (bus) => {
       if (Number(bus?.bus_id) !== Number(etaUpdate.bus_id)) {
         return bus;
@@ -129,11 +134,13 @@ export function mergeEtaIntoRoutes(routes, etaUpdate) {
         ...bus,
         current_speed_kmph: etaUpdate.current_speed_kmph,
         current_location: etaUpdate.current_location || bus.current_location,
-        eta_to_source_minutes:
-          sourceEta?.eta_minutes ?? bus.eta_to_source_minutes,
+        eta_to_source_minutes: busPassedSource
+          ? null
+          : (sourceEta?.eta_minutes ?? bus.eta_to_source_minutes),
         eta_to_destination_minutes:
           destinationEta?.eta_minutes ?? bus.eta_to_destination_minutes,
         upcoming_stops: upcomingStops,
+        bus_passed_source: busPassedSource,
         last_eta_at: etaUpdate.timestamp,
       };
     };

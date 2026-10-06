@@ -354,25 +354,36 @@ function PassengerDashboard() {
       setNearestLoading(false);
       return;
     }
-    if (!passengerCoords) return; // still waiting for GPS
+    const lat = passengerCoords?.latitude;
+    const lon = passengerCoords?.longitude;
+    if (lat == null || lon == null) return; // still waiting for GPS
 
-    let cancelled = false;
-    getNearestStops({ lat: passengerCoords.latitude, lon: passengerCoords.longitude })
+    const controller = new AbortController();
+
+    getNearestStops(
+      { lat, lon },
+      { signal: controller.signal }
+    )
       .then((data) => {
-        if (!cancelled) {
-          setNearestStops(data.stops || []);
-          setNearestLoading(false);
-        }
+        setNearestStops(data.stops || []);
+        setNearestLoading(false);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setNearestError(err.message || 'Could not load nearby stops.');
-          setNearestLoading(false);
-        }
+        if (err?.name === 'AbortError' || controller.signal.aborted) return;
+        setNearestError(err.message || 'Could not load nearby stops.');
+        setNearestLoading(false);
       });
 
-    return () => { cancelled = true; };
-  }, [activeTab, nearestLoading, passengerCoords, geoError]);
+    return () => {
+      controller.abort();
+    };
+  }, [
+    activeTab,
+    nearestLoading,
+    passengerCoords?.latitude,
+    passengerCoords?.longitude,
+    geoError,
+  ]);
 
   const handleClearNearest = useCallback(() => {
     setNearestStops([]);

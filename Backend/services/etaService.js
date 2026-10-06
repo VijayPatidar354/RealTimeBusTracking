@@ -429,39 +429,21 @@ function clearBusState(busId) {
 }
 
 // ================================================================
-// CALCULATE ETA FOR A SINGLE TARGET STOP
-// Used by route search system
+// CALCULATE ETA FROM STOPS ARRAY (IN-MEMORY)
+// Computes ETA from bus coordinates to a target stop using an
+// in-memory array of stops (avoids database round-trips).
 // ================================================================
 
-async function calculateETAForSingleStop({
-    routeId,
+function calculateETAFromStopsArray({
+    stops = [],
     busLatitude,
     busLongitude,
     targetStopOrder
 }) {
+    // Filter stops on the route up to targetStopOrder
+    const relevantStops = stops.filter(s => s.stop_order <= targetStopOrder);
 
-    const stopsResult = await pool.query(
-        `
-        SELECT
-            stop_name,
-            stop_order,
-            stop_lat,
-            stop_lon
-
-        FROM stops
-
-        WHERE
-              route_id = $1
-          AND stop_order <= $2
-
-        ORDER BY stop_order ASC
-        `,
-        [routeId, targetStopOrder]
-    );
-
-    const stops = stopsResult.rows;
-
-    if (!stops.length) {
+    if (!relevantStops.length) {
         return {
             eta_minutes: 999,
             distance_metres: 0
@@ -470,51 +452,73 @@ async function calculateETAForSingleStop({
 
     let totalDistance = 0;
 
-    // ------------------------------------------------------------
     // BUS → FIRST STOP
-    // ------------------------------------------------------------
+    const firstStopLat = parseFloat(relevantStops[0].stop_lat);
+    const firstStopLon = parseFloat(relevantStops[0].stop_lon);
 
-    totalDistance += haversineDistance(
-        parseFloat(busLatitude),
-        parseFloat(busLongitude),
-
-        parseFloat(stops[0].stop_lat),
-        parseFloat(stops[0].stop_lon)
-    );
-
-    // ------------------------------------------------------------
-    // CUMULATIVE STOP DISTANCE
-    // ------------------------------------------------------------
-
-    for (let i = 0; i < stops.length - 1; i++) {
-
+    if (!isNaN(firstStopLat) && !isNaN(firstStopLon)) {
         totalDistance += haversineDistance(
-
-            parseFloat(stops[i].stop_lat),
-            parseFloat(stops[i].stop_lon),
-
-            parseFloat(stops[i + 1].stop_lat),
-            parseFloat(stops[i + 1].stop_lon)
+            parseFloat(busLatitude),
+            parseFloat(busLongitude),
+            firstStopLat,
+            firstStopLon
         );
     }
 
-    // ------------------------------------------------------------
-    // SPEED
-    // ------------------------------------------------------------
+    // CUMULATIVE STOP DISTANCE
+    for (let i = 0; i < relevantStops.length - 1; i++) {
+        const lat1 = parseFloat(relevantStops[i].stop_lat);
+        const lon1 = parseFloat(relevantStops[i].stop_lon);
+        const lat2 = parseFloat(relevantStops[i + 1].stop_lat);
+        const lon2 = parseFloat(relevantStops[i + 1].stop_lon);
+
+        if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
+            totalDistance += haversineDistance(lat1, lon1, lat2, lon2);
+        }
+    }
 
     const AVG_BUS_SPEED_MPS = 8.33; // 30 km/h
-
-    const etaSeconds =
-        totalDistance / AVG_BUS_SPEED_MPS;
+    const etaSeconds = totalDistance / AVG_BUS_SPEED_MPS;
 
     return {
-
-        eta_minutes:
-            Math.max(1, Math.ceil(etaSeconds / 60)),
-
-        distance_metres:
-            Math.round(totalDistance)
+        eta_minutes: Math.max(1, Math.ceil(etaSeconds / 60)),
+        distance_metres: Math.round(totalDistance)
     };
+}
+
+// ================================================================
+// CALCULATE ETA FOR A SINGLE TARGET STOP
+// Used by route search system (queries DB then calculates)
+// ================================================================
+
+async function calculateETAForSingleStop({
+    routeId,
+    busLatitude,
+    busLongitude,
+    targetStopOrder
+}) {
+    const stopsResult = await pool.query(
+        `
+        SELECT
+            stop_name,
+            stop_order,
+            stop_lat,
+            stop_lon
+        FROM stops
+        WHERE
+              route_id = $1
+          AND stop_order <= $2
+        ORDER BY stop_order ASC
+        `,
+        [routeId, targetStopOrder]
+    );
+
+    return calculateETAFromStopsArray({
+        stops: stopsResult.rows,
+        busLatitude,
+        busLongitude,
+        targetStopOrder
+    });
 }
 
 module.exports = {
@@ -526,5 +530,6 @@ module.exports = {
     generateETAPayload,
     emitETAUpdate,
     clearBusState,
-    calculateETAForSingleStop
+    calculateETAForSingleStop,
+    calculateETAFromStopsArray
 };

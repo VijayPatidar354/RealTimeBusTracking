@@ -13,7 +13,7 @@ import {
   Radio,
 } from "lucide-react";
 import { useDriverAuth } from "../../context/DriverAuthContext.jsx";
-import { socket } from "../../sockets/socket.js";
+import { socket, socketEvents } from "../../sockets/socket.js";
 import {
   getAllWaiting,
   getRouteStops,
@@ -365,7 +365,7 @@ export default function DriverDashboard() {
       // Re-send auth token on every (re)connect so the server always
       // has the latest token before we join the driver room.
       socket.auth = { token };
-      socket.emit("join:driver", { driverId: driver.id });
+      socket.emit(socketEvents.driver.joinDriver, { driverId: driver.id });
     };
     const onDisconnect = () => setConnected(false);
 
@@ -436,27 +436,27 @@ export default function DriverDashboard() {
       setEtaStops(data.upcoming_stops || []);
     };
 
-    socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-    socket.on("route-waiting-updated", onRouteWaiting);
-    socket.on("next-stop-updated", onNextStop);
-    socket.on("waiting:updated", onWaitingUpdated);
-    socket.on("trip:completed", onTripCompleted);
-    socket.on("bus:route_assigned", onBusRouteAssigned);
-    socket.on("eta-updated", onEtaUpdated);
+    socket.on(socketEvents.connection.connect,    onConnect);
+    socket.on(socketEvents.connection.disconnect, onDisconnect);
+    socket.on(socketEvents.bus.routeWaitingUpdated, onRouteWaiting);
+    socket.on(socketEvents.bus.nextStopUpdated,     onNextStop);
+    socket.on(socketEvents.bus.waitingUpdated,      onWaitingUpdated);
+    socket.on(socketEvents.bus.tripCompleted,       onTripCompleted);
+    socket.on(socketEvents.bus.routeAssigned,       onBusRouteAssigned);
+    socket.on(socketEvents.bus.etaUpdated,          onEtaUpdated);
 
     if (!socket.connected) socket.connect();
     else onConnect();
 
     return () => {
-      socket.off("connect", onConnect);
-      socket.off("disconnect", onDisconnect);
-      socket.off("route-waiting-updated", onRouteWaiting);
-      socket.off("next-stop-updated", onNextStop);
-      socket.off("waiting:updated", onWaitingUpdated);
-      socket.off("trip:completed", onTripCompleted);
-      socket.off("bus:route_assigned", onBusRouteAssigned);
-      socket.off("eta-updated", onEtaUpdated);
+      socket.off(socketEvents.connection.connect,    onConnect);
+      socket.off(socketEvents.connection.disconnect, onDisconnect);
+      socket.off(socketEvents.bus.routeWaitingUpdated, onRouteWaiting);
+      socket.off(socketEvents.bus.nextStopUpdated,     onNextStop);
+      socket.off(socketEvents.bus.waitingUpdated,      onWaitingUpdated);
+      socket.off(socketEvents.bus.tripCompleted,       onTripCompleted);
+      socket.off(socketEvents.bus.routeAssigned,       onBusRouteAssigned);
+      socket.off(socketEvents.bus.etaUpdated,          onEtaUpdated);
     };
   }, [driver?.id, loadStops, loadRouteStops, showToast]);
 

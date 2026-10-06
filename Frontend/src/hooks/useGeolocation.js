@@ -43,10 +43,20 @@ export function useGeolocation() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setCoords({
-          latitude:  position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy:  position.coords.accuracy,
+        setCoords((prev) => {
+          if (
+            prev &&
+            prev.latitude === position.coords.latitude &&
+            prev.longitude === position.coords.longitude &&
+            prev.accuracy === position.coords.accuracy
+          ) {
+            return prev;
+          }
+          return {
+            latitude:  position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy:  position.coords.accuracy,
+          };
         });
         setLoading(false);
       },

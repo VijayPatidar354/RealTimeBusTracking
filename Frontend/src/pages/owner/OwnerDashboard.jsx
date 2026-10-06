@@ -6,7 +6,7 @@ import {
   CheckCircle2, Map,
 } from 'lucide-react';
 import { useOwnerAuth } from '../../context/OwnerAuthContext.jsx';
-import { socket } from '../../sockets/socket.js';
+import { socket, socketEvents } from '../../sockets/socket.js';
 import {
   getMyBuses, createBus, assignDriver, assignRoute,
   getMyRoutes, getMyRouteById, createRoute, addStop,
@@ -154,8 +154,8 @@ function BusMapModal({ open, bus, onClose }) {
         setLastUpdated(new Date());
       }
     };
-    socket.on('bus:location_updated', handler);
-    return () => socket.off('bus:location_updated', handler);
+    socket.on(socketEvents.bus.locationUpdated, handler);
+    return () => socket.off(socketEvents.bus.locationUpdated, handler);
   }, [open, bus]);
 
   // Init map when modal opens and Leaflet is ready
@@ -350,13 +350,13 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
         )
       );
     };
-    socket.on('bus:location_updated', handler);
-    socket.on('bus:route_assigned',   onRouteAssigned);
-    socket.on('bus:status_updated',   onStatusUpdated);
+    socket.on(socketEvents.bus.locationUpdated, handler);
+    socket.on(socketEvents.bus.routeAssigned,   onRouteAssigned);
+    socket.on(socketEvents.bus.statusUpdated,   onStatusUpdated);
     return () => {
-      socket.off('bus:location_updated', handler);
-      socket.off('bus:route_assigned',   onRouteAssigned);
-      socket.off('bus:status_updated',   onStatusUpdated);
+      socket.off(socketEvents.bus.locationUpdated, handler);
+      socket.off(socketEvents.bus.routeAssigned,   onRouteAssigned);
+      socket.off(socketEvents.bus.statusUpdated,   onStatusUpdated);
     };
   }, [load, showToast]);
 
@@ -772,14 +772,19 @@ export default function OwnerDashboard() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    const onConnect    = () => { setConnected(true); socket.emit('join:owner', {}); };
+    const onConnect = () => {
+      setConnected(true);
+      if (token) socket.auth = { token };
+      const ownerId = owner?.id || owner?.ownerId;
+      socket.emit(socketEvents.owner.joinOwner, { ownerId });
+    };
     const onDisconnect = () => setConnected(false);
-    socket.on('connect',    onConnect);
-    socket.on('disconnect', onDisconnect);
+    socket.on(socketEvents.connection.connect,    onConnect);
+    socket.on(socketEvents.connection.disconnect, onDisconnect);
     if (!socket.connected) socket.connect();
     else onConnect();
-    return () => { socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); };
-  }, [isAuthenticated]);
+    return () => { socket.off(socketEvents.connection.connect, onConnect); socket.off(socketEvents.connection.disconnect, onDisconnect); };
+  }, [isAuthenticated, token, owner]);
 
   const showToast = useCallback((msg, type = 'success') => {
     clearTimeout(toastTimer.current);

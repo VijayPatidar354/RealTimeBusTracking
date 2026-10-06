@@ -87,7 +87,13 @@ function BusResultCard({
         <div className="rounded-lg bg-ink-50 p-3 dark:bg-ink-950/70">
           <p className="text-xs font-medium text-ink-500 dark:text-ink-400">ETA to source</p>
           <div className="mt-2">
-            <LiveEtaChip minutes={bus.eta_to_source_minutes} />
+            {bus.bus_passed_source ? (
+              <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                Bus passed
+              </span>
+            ) : (
+              <LiveEtaChip minutes={bus.eta_to_source_minutes} />
+            )}
           </div>
         </div>
         <div className="rounded-lg bg-ink-50 p-3 dark:bg-ink-950/70">

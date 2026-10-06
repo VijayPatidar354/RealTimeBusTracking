@@ -47,6 +47,7 @@ const pool                  = require('../config/db');
 const { getIO }             = require('../socket');
 const { clearBusState }     = require('./etaService');
 const { BUS_STATUSES }      = require('../utils/busStatus');
+const { assignReverseRoute } = require('./reverseRouteService');
 
 // ── Configurable geofence radius (metres) ────────────────────────
 const GEOFENCE_RADIUS_METRES = parseInt(process.env.GEOFENCE_RADIUS || '50', 10);
@@ -160,39 +161,7 @@ async function getNextStopInfo(routeId, stopOrder) {
     };
 }
 
-// ================================================================
-//  HELPER — getUpcomingStopsWaiting
-//  Returns all stops (stop_order >= currentStopOrder) with
-//  waiting counts and is_next_stop flag.
-// ================================================================
-async function getUpcomingStopsWaiting(routeId, currentStopOrder) {
-    const result = await pool.query(
-        `
-        SELECT
-            s.id          AS stop_id,
-            s.stop_name,
-            s.stop_order,
-            s.stop_lat,
-            s.stop_lon,
-            COUNT(pw.id)::INTEGER AS waiting_count,
-            (s.stop_order = $2)   AS is_next_stop
-
-        FROM  stops s
-
-        LEFT JOIN passenger_waiting pw
-               ON pw.stop_id  = s.id
-              AND pw.route_id  = $1
-
-        WHERE s.route_id    = $1
-          AND s.stop_order >= $2
-
-        GROUP BY s.id
-        ORDER BY s.stop_order ASC
-        `,
-        [routeId, currentStopOrder]
-    );
-    return result.rows;
-}
+const { getUpcomingStopsWaiting } = require('../utils/routeQueries');
 
 // ================================================================
 //  checkAndProgressStop — MAIN EXPORTED FUNCTION
@@ -365,6 +334,13 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
             [newStopOrder, bus_id]
         );
 
+        // ── 10b. Release lock IMMEDIATELY after DB write ─────────
+        //  Must happen before any socket emits — if an emit throws,
+        //  the DB already holds the new stop_order. Without this
+        //  early release, a stale Map entry would accumulate for
+        //  every stop on every trip (memory leak over days).
+        triggeredStops.delete(bus_id);
+
         // ── 11. Emit: stop:reached ────────────────────────────────
         const stopReachedPayload = {
             event:                 'stop:reached',
@@ -385,22 +361,30 @@ async function checkAndProgressStop(driverId, latitude, longitude) {
         // ── 12. Trip completed branch ─────────────────────────────
         if (tripCompleted) {
             triggeredStops.delete(bus_id); // release — bus finished, no more stops
-            clearBusState(bus_id);         // clean up ETA speed history
 
-            const tripCompletedPayload = {
-                event:         'trip:completed',
-                bus_id,
-                route_id,
-                message:       'Bus has completed all stops on this route',
-                auto_detected: true,
-                timestamp:     new Date().toISOString()
-            };
-            getIO().to(`route:${route_id}`).emit('trip:completed',  tripCompletedPayload);
-            getIO().to(`driver:${driverId}`).emit('trip:completed', tripCompletedPayload);
-            getIO().to(`owner:${owner_id}`).emit('trip:completed',  tripCompletedPayload);
-            getIO().to('admin').emit('trip:completed',               tripCompletedPayload);
-
-            console.log(`[AutoStop] Bus ${bus_id} completed trip on route ${route_id}`);
+            // Auto-assign the reverse route (shared logic with manual
+            // markStopReached). This creates the reverse route if needed,
+            // reassigns the bus, resets current_stop_order to 1, and
+            // emits trip:completed + bus:route_assigned + next-stop-updated.
+            try {
+                const result = await assignReverseRoute({
+                    bus_id, route_id, driverId, owner_id,
+                });
+                console.log(
+                    `[AutoStop] Bus ${bus_id} completed trip on route ${route_id}` +
+                    ` — auto-assigned reverse route ${result.reverseRouteId} (${result.reverseRouteName})`
+                );
+            } catch (reverseErr) {
+                // If reverse-route assignment fails, still log completion
+                // but don't crash the whole service. The bus stays at
+                // current_stop_order > maxOrder and the owner can manually
+                // reassign.
+                console.error(
+                    `[AutoStop] Bus ${bus_id} completed trip on route ${route_id}` +
+                    ` but reverse-route assignment failed:`, reverseErr.message
+                );
+                clearBusState(bus_id);
+            }
             return;
         }
 

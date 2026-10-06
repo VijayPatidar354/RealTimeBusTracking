@@ -22,14 +22,38 @@ export const socketEvents = Object.freeze({
     connectError: 'connect_error',
     reconnectAttempt: 'reconnect_attempt',
   },
-  passenger: {
-    joinRoute: 'join:route',
-    busLocationUpdated: 'bus:location_updated',
-    etaUpdated: 'eta-updated',
+  // Events emitted by the server that any dashboard role may receive
+  bus: {
+    locationUpdated:  'bus:location_updated',
+    routeAssigned:    'bus:route_assigned',
+    statusUpdated:    'bus:status_updated',
+    tripCompleted:    'trip:completed',
+    etaUpdated:       'eta-updated',
+    nextStopUpdated:  'next-stop-updated',
+    routeWaitingUpdated: 'route-waiting-updated',
+    waitingUpdated:   'waiting:updated',
+    stopReached:      'stop:reached',
   },
-  driver: {},
-  owner: {},
-  admin: {},
+  // Passenger-specific (join + listening convenience aliases pointing to bus.*)
+  passenger: {
+    joinRoute:         'join:route',
+    busLocationUpdated: 'bus:location_updated',
+    etaUpdated:        'eta-updated',
+    waitingUpdated:    'waiting:updated',
+    stopReached:       'stop:reached',
+    nextStopUpdated:   'next-stop-updated',
+    tripCompleted:     'trip:completed',
+    busRouteAssigned:  'bus:route_assigned',
+  },
+  driver: {
+    joinDriver: 'join:driver',
+  },
+  owner: {
+    joinOwner: 'join:owner',
+  },
+  admin: {
+    joinAdmin: 'join:admin',
+  },
 });
 
 export default socket;

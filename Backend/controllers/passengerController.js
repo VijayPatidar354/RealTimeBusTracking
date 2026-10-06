@@ -15,7 +15,11 @@ const {
 } = require("../utils/validators");
 const { runValidations } = require("../utils/runValidations");
 const { BUS_STATUSES, busNotActiveResponse } = require("../utils/busStatus");
-const { dWithinExpression, distanceExpression } = require("../utils/spatialSql");
+const {
+  dWithinExpression,
+  distanceExpression,
+} = require("../utils/spatialSql");
+const { assignReverseRoute } = require("../services/reverseRouteService");
 
 // ================================================================
 //  SHARED HELPER — getNextStopInfo
@@ -47,33 +51,7 @@ async function getNextStopInfo(routeId, currentStopOrder) {
   };
 }
 
-// ================================================================
-//  SHARED HELPER — getUpcomingStopsWaiting
-// ================================================================
-async function getUpcomingStopsWaiting(routeId, currentStopOrder) {
-  const result = await pool.query(
-    `
-        SELECT
-            s.id          AS stop_id,
-            s.stop_name,
-            s.stop_order,
-            s.stop_lat,
-            s.stop_lon,
-            COUNT(pw.id)::INTEGER AS waiting_count,
-            (s.stop_order = $2)   AS is_next_stop
-        FROM  stops s
-        LEFT JOIN passenger_waiting pw
-               ON pw.stop_id  = s.id
-              AND pw.route_id  = $1
-        WHERE s.route_id    = $1
-          AND s.stop_order >= $2
-        GROUP BY s.id
-        ORDER BY s.stop_order ASC
-        `,
-    [routeId, currentStopOrder],
-  );
-  return result.rows;
-}
+const { getUpcomingStopsWaiting } = require("../utils/routeQueries");
 
 // ── AUTH ──────────────────────────────────────────────────────────
 
@@ -346,10 +324,11 @@ const registerWaiting = async (req, res) => {
 
     const busStatusResult = await pool.query(
       `SELECT
-                COUNT(id)::INTEGER                                          AS total_active,
-                COUNT(CASE WHEN current_stop_order > $2 THEN 1 END)::INTEGER AS already_passed
-             FROM buses
-             WHERE route_id = $1 AND driver_id IS NOT NULL AND status = 'ACTIVE'`,
+                COUNT(b.id)::INTEGER                                          AS total_active,
+                COUNT(CASE WHEN b.current_stop_order > $2 THEN 1 END)::INTEGER AS already_passed
+             FROM buses b
+             JOIN drivers d ON b.driver_id = d.id
+             WHERE b.route_id = $1 AND b.driver_id IS NOT NULL AND b.status = 'ACTIVE'`,
       [route_id, stop.stop_order],
     );
     const { total_active, already_passed } = busStatusResult.rows[0];
@@ -359,7 +338,7 @@ const registerWaiting = async (req, res) => {
         message: "No active buses are currently operating on this route",
       });
     }
-    if (total_active > 0 && already_passed === total_active) {
+    if (total_active > 0 && already_passed >= total_active) {
       return res.status(400).json({
         success: false,
         message: `All active buses have already passed "${stop.stop_name}". Cannot register waiting at a stop the bus has passed.`,
@@ -639,7 +618,7 @@ const driverGetAllWaiting = async (req, res) => {
 const markStopReached = async (req, res) => {
   try {
     const driverId = req.driver.id;
-    const { stop_id } = req.body;
+    const { stop_id, latitude, longitude } = req.body;
 
     if (runValidations(res, validateId(stop_id, "stop_id"))) return;
 
@@ -691,16 +670,37 @@ const markStopReached = async (req, res) => {
     }
 
     if (reachedStop.stop_lat !== null && reachedStop.stop_lon !== null) {
-      const driverLocResult = await pool.query(
-        `SELECT latitude, longitude FROM drivers WHERE id = $1`,
-        [driverId],
-      );
-      const driverLoc = driverLocResult.rows[0];
+      let driverLat = latitude != null ? parseFloat(latitude) : null;
+      let driverLon = longitude != null ? parseFloat(longitude) : null;
+
+      // Fallback to database coordinates if not provided in the request body
+      if (
+        driverLat === null ||
+        driverLon === null ||
+        isNaN(driverLat) ||
+        isNaN(driverLon)
+      ) {
+        const driverLocResult = await pool.query(
+          `SELECT latitude, longitude FROM drivers WHERE id = $1`,
+          [driverId],
+        );
+        const driverLoc = driverLocResult.rows[0];
+
+        if (
+          driverLoc &&
+          driverLoc.latitude !== null &&
+          driverLoc.longitude !== null
+        ) {
+          driverLat = parseFloat(driverLoc.latitude);
+          driverLon = parseFloat(driverLoc.longitude);
+        }
+      }
 
       if (
-        !driverLoc ||
-        driverLoc.latitude === null ||
-        driverLoc.longitude === null
+        driverLat === null ||
+        driverLon === null ||
+        isNaN(driverLat) ||
+        isNaN(driverLon)
       ) {
         return res.status(400).json({
           success: false,
@@ -711,8 +711,8 @@ const markStopReached = async (req, res) => {
 
       const GEOFENCE_RADIUS = 50;
       const distMetres = haversineDistance(
-        parseFloat(driverLoc.latitude),
-        parseFloat(driverLoc.longitude),
+        driverLat,
+        driverLon,
         parseFloat(reachedStop.stop_lat),
         parseFloat(reachedStop.stop_lon),
       );
@@ -844,141 +844,19 @@ const markStopReached = async (req, res) => {
     }
 
     // ── TRIP COMPLETED — Auto-assign reverse route ──
-    const currentRouteResult = await pool.query(
-      `SELECT id, route_name, source, destination, owner_id
-             FROM routes WHERE id = $1`,
-      [route_id],
-    );
-    const currentRoute = currentRouteResult.rows[0];
-
-    const currentStopsResult = await pool.query(
-      `SELECT id, stop_name, stop_order, stop_lat, stop_lon
-             FROM stops WHERE route_id = $1
-             ORDER BY stop_order ASC`,
-      [route_id],
-    );
-    const currentStops = currentStopsResult.rows;
-
-    const reverseSource = currentRoute.destination;
-    const reverseDestination = currentRoute.source;
-    const reverseRouteName = `${reverseSource} to ${reverseDestination}`;
-
-    const existingReverseResult = await pool.query(
-      `SELECT id, route_name, source, destination
-             FROM routes
-             WHERE source = $1 AND destination = $2 AND owner_id = $3
-             LIMIT 1`,
-      [reverseSource, reverseDestination, currentRoute.owner_id],
-    );
-
-    let reverseRouteId;
-
-    if (existingReverseResult.rows.length > 0) {
-      reverseRouteId = existingReverseResult.rows[0].id;
-    } else {
-      const newRouteResult = await pool.query(
-        `INSERT INTO routes (route_name, source, destination, owner_id)
-                 VALUES ($1, $2, $3, $4)
-                 RETURNING id`,
-        [
-          reverseRouteName,
-          reverseSource,
-          reverseDestination,
-          currentRoute.owner_id,
-        ],
-      );
-      reverseRouteId = newRouteResult.rows[0].id;
-
-      const totalStops = currentStops.length;
-      for (let i = 0; i < currentStops.length; i++) {
-        const originalStop = currentStops[totalStops - 1 - i];
-        const newStopOrder = i + 1;
-        await pool.query(
-          `INSERT INTO stops (route_id, stop_name, stop_order, stop_lat, stop_lon)
-                     VALUES ($1, $2, $3, $4, $5)`,
-          [
-            reverseRouteId,
-            originalStop.stop_name,
-            newStopOrder,
-            originalStop.stop_lat || null,
-            originalStop.stop_lon || null,
-          ],
-        );
-      }
-    }
-
-    await pool.query(
-      `UPDATE buses SET route_id = $1, current_stop_order = 1 WHERE id = $2`,
-      [reverseRouteId, bus_id],
-    );
-    etaService.clearBusState(bus_id);
-
-    const firstStopResult = await pool.query(
-      `SELECT s.id AS stop_id, s.stop_name, s.stop_order,
-                    COUNT(pw.id)::INTEGER AS waiting_count
-             FROM stops s
-             LEFT JOIN passenger_waiting pw
-                    ON pw.stop_id = s.id AND pw.route_id = $1
-             WHERE s.route_id = $1 AND s.stop_order = 1
-             GROUP BY s.id`,
-      [reverseRouteId],
-    );
-    const firstStop = firstStopResult.rows[0] || null;
-
-    getIO().to(`route:${route_id}`).emit("trip:completed", {
-      event: "trip:completed",
+    const reverseResult = await assignReverseRoute({
       bus_id,
       route_id,
-      next_route_id: reverseRouteId,
-      next_route_name: reverseRouteName,
-      message: "Bus has completed all stops on this route",
-      timestamp: new Date().toISOString(),
+      driverId,
+      owner_id,
     });
-
-    const routeAssignedPayload = {
-      event: "bus:route_assigned",
-      bus_id,
-      route_id: reverseRouteId,
-      route_name: reverseRouteName,
-      bus_status: BUS_STATUSES.ACTIVE,
-      source: reverseSource,
-      destination: reverseDestination,
-      auto_reversed: true,
-      timestamp: new Date().toISOString(),
-    };
-    getIO()
-      .to(`driver:${driverId}`)
-      .emit("bus:route_assigned", routeAssignedPayload);
-    getIO()
-      .to(`owner:${owner_id}`)
-      .emit("bus:route_assigned", routeAssignedPayload);
-    getIO().to("admin").emit("bus:route_assigned", routeAssignedPayload);
-
-    if (firstStop) {
-      const nextStopPayload = {
-        event: "next-stop-updated",
-        bus_id,
-        route_id: reverseRouteId,
-        next_stop_name: firstStop.stop_name,
-        next_stop_order: firstStop.stop_order,
-        waiting_count: firstStop.waiting_count,
-        timestamp: new Date().toISOString(),
-      };
-      getIO()
-        .to(`driver:${driverId}`)
-        .emit("next-stop-updated", nextStopPayload);
-      getIO()
-        .to(`owner:${owner_id}`)
-        .emit("next-stop-updated", nextStopPayload);
-      getIO().to("admin").emit("next-stop-updated", nextStopPayload);
-    }
 
     res.status(200).json({
       success: true,
       message: `Reached final stop "${reachedStop.stop_name}" — trip completed`,
       trip_status: "completed",
-      next_route_id: reverseRouteId,
-      next_route_name: reverseRouteName,
+      next_route_id: reverseResult.reverseRouteId,
+      next_route_name: reverseResult.reverseRouteName,
       auto_reversed: true,
     });
   } catch (error) {
@@ -1105,47 +983,77 @@ const searchRoute = async (req, res) => {
       });
     }
 
+    const routeIds = [...new Set(routeResult.rows.map((r) => r.route_id))];
+
+    // Batch fetch all active buses and stops for all matched routes in 2 parallel queries
+    const [allBusesResult, allStopsResult] = await Promise.all([
+      pool.query(
+        `SELECT b.id AS bus_id, b.bus_number, b.bus_type,
+                b.current_stop_order, b.route_id,
+                COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph,
+                d.id AS driver_id, d.latitude, d.longitude
+         FROM   buses b
+         JOIN   drivers d ON b.driver_id = d.id
+         WHERE  b.route_id = ANY($1::int[])
+           AND  b.status = 'ACTIVE'
+           AND  d.latitude  IS NOT NULL
+           AND  d.longitude IS NOT NULL
+         ORDER BY b.id ASC`,
+        [routeIds],
+      ),
+      pool.query(
+        `SELECT id, route_id, stop_name, stop_order, stop_lat, stop_lon
+         FROM   stops
+         WHERE  route_id = ANY($1::int[])
+         ORDER BY route_id, stop_order ASC`,
+        [routeIds],
+      ),
+    ]);
+
+    // Group buses and stops by route_id
+    const busesByRoute = new Map();
+    for (const bus of allBusesResult.rows) {
+      if (!busesByRoute.has(bus.route_id)) {
+        busesByRoute.set(bus.route_id, []);
+      }
+      busesByRoute.get(bus.route_id).push(bus);
+    }
+
+    const stopsByRoute = new Map();
+    for (const stop of allStopsResult.rows) {
+      if (!stopsByRoute.has(stop.route_id)) {
+        stopsByRoute.set(stop.route_id, []);
+      }
+      stopsByRoute.get(stop.route_id).push(stop);
+    }
+
     const routes = [];
 
     for (const route of routeResult.rows) {
-      const busResult = await pool.query(
-        `SELECT b.id AS bus_id, b.bus_number, b.bus_type,
-                        b.current_stop_order,
-                        COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph,
-                        d.id AS driver_id, d.latitude, d.longitude
-                 FROM   buses b
-                 JOIN   drivers d ON b.driver_id = d.id
-                 WHERE  b.route_id = $1
-                   AND  b.status = 'ACTIVE'
-                   AND  d.latitude  IS NOT NULL
-                   AND  d.longitude IS NOT NULL
-                 ORDER BY b.id ASC`,
-        [route.route_id],
-      );
+      const routeStops = stopsByRoute.get(route.route_id) || [];
+      const routeBuses = busesByRoute.get(route.route_id) || [];
 
-      const stopsResult = await pool.query(
-        `SELECT stop_name, stop_order
-                 FROM   stops
-                 WHERE  route_id   = $1
-                   AND  stop_order >= $2
-                   AND  stop_order <= $3
-                 ORDER BY stop_order ASC`,
-        [route.route_id, route.source_order, route.destination_order],
-      );
-      const segmentStops = stopsResult.rows.map((s) => s.stop_name);
+      // Extract segment stop names between source_order and destination_order
+      const segmentStops = routeStops
+        .filter(
+          (s) =>
+            s.stop_order >= route.source_order &&
+            s.stop_order <= route.destination_order,
+        )
+        .map((s) => s.stop_name);
 
       const busesWithETA = [];
 
-      for (const bus of busResult.rows) {
-        const sourceETA = await etaService.calculateETAForSingleStop({
-          routeId: route.route_id,
+      for (const bus of routeBuses) {
+        const sourceETA = etaService.calculateETAFromStopsArray({
+          stops: routeStops,
           busLatitude: parseFloat(bus.latitude),
           busLongitude: parseFloat(bus.longitude),
           targetStopOrder: route.source_order,
         });
 
-        const destinationETA = await etaService.calculateETAForSingleStop({
-          routeId: route.route_id,
+        const destinationETA = etaService.calculateETAFromStopsArray({
+          stops: routeStops,
           busLatitude: parseFloat(bus.latitude),
           busLongitude: parseFloat(bus.longitude),
           targetStopOrder: route.destination_order,
@@ -1216,7 +1124,7 @@ const boardBus = async (req, res) => {
     if (runValidations(res, validateId(id, "Waiting entry ID"))) return;
 
     const rowResult = await pool.query(
-      `SELECT pw.id, pw.stop_id, pw.route_id, s.stop_name, s.stop_order
+      `SELECT pw.id, pw.stop_id, pw.route_id, pw.bus_arrived_at, s.stop_name, s.stop_order
              FROM   passenger_waiting pw
              JOIN   stops s ON s.id = pw.stop_id
              WHERE  pw.id = $1 AND pw.passenger_id = $2`,
@@ -1232,16 +1140,68 @@ const boardBus = async (req, res) => {
 
     const row = rowResult.rows[0];
 
-    await pool.query(`DELETE FROM passenger_waiting WHERE id = $1`, [id]);
+    if (!row.bus_arrived_at) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot confirm boarding: the bus has not arrived at your stop yet",
+      });
+    }
 
-    await pool.query(
-      `INSERT INTO trip_history
-                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
-             SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'boarded', NOW()
-             FROM   stops s JOIN routes r ON r.id = $3
-             WHERE  s.id = $2`,
-      [passengerId, row.stop_id, row.route_id],
-    );
+    // Use a transaction: INSERT history first (verifiable via RETURNING), then
+    // DELETE the waiting row. If the route/stop was concurrently deleted and the
+    // SELECT returns 0 rows, we roll back and tell the passenger rather than
+    // silently losing their trip record.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Claim the waiting row FIRST. DELETE takes a row lock, so the autoExpire
+      // job (or a double-tap) cannot also resolve this same entry: whoever locks
+      // the row first wins, the other sees 0 rows and backs off. This prevents a
+      // "boarded" history row AND an "expired" history row for the same entry.
+      const claimResult = await client.query(
+        `DELETE FROM passenger_waiting
+          WHERE id = $1 AND passenger_id = $2 AND bus_arrived_at IS NOT NULL
+          RETURNING id`,
+        [id, passengerId],
+      );
+
+      if (claimResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "This waiting entry is no longer active (it may have expired or was already resolved).",
+        });
+      }
+
+      const historyResult = await client.query(
+        `INSERT INTO trip_history
+                  (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at, resolved_at)
+               SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'boarded', NOW(), NOW()
+               FROM   stops s JOIN routes r ON r.id = $3
+               WHERE  s.id = $2
+               RETURNING id`,
+        [passengerId, row.stop_id, row.route_id],
+      );
+
+      if (historyResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "Could not record trip history — the stop or route no longer exists. Please contact support.",
+        });
+      }
+
+      await client.query("COMMIT");
+    } catch (txErr) {
+      await client.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     const countResult = await pool.query(
       `SELECT COUNT(id)::INTEGER AS total_waiting
@@ -1309,42 +1269,34 @@ const EXPIRE_MINUTES = 5;
 
 async function autoExpireWaiting() {
   try {
-    const expiredGroups = await pool.query(
-      `SELECT pw.stop_id, pw.route_id,
-                    s.stop_name, s.stop_order,
-                    COUNT(pw.id)::INTEGER AS expiring_count
-             FROM   passenger_waiting pw
-             JOIN   stops s ON s.id = pw.stop_id
-             WHERE  pw.bus_arrived_at IS NOT NULL
-               AND  pw.bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')
-             GROUP  BY pw.stop_id, pw.route_id, s.stop_name, s.stop_order`,
+    const expiredResult = await pool.query(
+      `WITH deleted_rows AS (
+         DELETE FROM passenger_waiting
+         WHERE bus_arrived_at IS NOT NULL
+           AND bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')
+         RETURNING passenger_id, stop_id, route_id
+       ),
+       inserted_history AS (
+         INSERT INTO trip_history
+           (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at, resolved_at)
+         SELECT d.passenger_id, d.stop_id, d.route_id,
+                s.stop_name, r.route_name, r.source, r.destination,
+                'expired', NOW(), NOW()
+         FROM deleted_rows d
+         JOIN stops s ON s.id = d.stop_id
+         JOIN routes r ON r.id = d.route_id
+       )
+       SELECT d.stop_id, d.route_id, s.stop_name, s.stop_order,
+              COUNT(d.passenger_id)::INTEGER AS expiring_count
+       FROM deleted_rows d
+       JOIN stops s ON s.id = d.stop_id
+       GROUP BY d.stop_id, d.route_id, s.stop_name, s.stop_order`,
       [EXPIRE_MINUTES],
     );
 
-    if (expiredGroups.rows.length === 0) return;
+    if (expiredResult.rows.length === 0) return;
 
-    await pool.query(
-      `INSERT INTO trip_history
-                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
-             SELECT pw.passenger_id, pw.stop_id, pw.route_id,
-                    s.stop_name, r.route_name, r.source, r.destination,
-                    'expired', NOW()
-             FROM   passenger_waiting pw
-             JOIN   stops  s ON s.id  = pw.stop_id
-             JOIN   routes r ON r.id  = pw.route_id
-             WHERE  pw.bus_arrived_at IS NOT NULL
-               AND  pw.bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')`,
-      [EXPIRE_MINUTES],
-    );
-
-    await pool.query(
-      `DELETE FROM passenger_waiting
-             WHERE  bus_arrived_at IS NOT NULL
-               AND  bus_arrived_at < NOW() - ($1 * INTERVAL '1 minute')`,
-      [EXPIRE_MINUTES],
-    );
-
-    for (const group of expiredGroups.rows) {
+    for (const group of expiredResult.rows) {
       const { stop_id, route_id, stop_name, stop_order } = group;
 
       const countResult = await pool.query(
@@ -1431,17 +1383,60 @@ const cancelWaiting = async (req, res) => {
     }
 
     const row = rowResult.rows[0];
+    // Use a transaction: INSERT history first (verifiable via RETURNING), then
+    // DELETE the waiting row. If the route/stop was concurrently deleted and the
+    // SELECT returns 0 rows, we roll back and tell the passenger rather than
+    // silently losing their trip record.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    await pool.query(`DELETE FROM passenger_waiting WHERE id = $1`, [id]);
+      // Claim the waiting row FIRST. DELETE takes a row lock, so the autoExpire
+      // job (or a double-tap) cannot also resolve this same entry: whoever locks
+      // the row first wins, the other sees 0 rows and backs off. This prevents a
+      // "cancelled" history row AND an "expired" history row for the same entry.
+      const claimResult = await client.query(
+        `DELETE FROM passenger_waiting
+          WHERE id = $1 AND passenger_id = $2
+          RETURNING id`,
+        [id, passengerId],
+      );
 
-    await pool.query(
-      `INSERT INTO trip_history
-                (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at)
-             SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'cancelled', NOW()
-             FROM   stops s JOIN routes r ON r.id = $3
-             WHERE  s.id = $2`,
-      [passengerId, row.stop_id, row.route_id],
-    );
+      if (claimResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "This waiting entry is no longer active (it may have expired or was already resolved).",
+        });
+      }
+
+      const historyResult = await client.query(
+        `INSERT INTO trip_history
+                  (passenger_id, stop_id, route_id, stop_name, route_name, source, destination, status, created_at, resolved_at)
+               SELECT $1, $2, $3, s.stop_name, r.route_name, r.source, r.destination, 'cancelled', NOW(), NOW()
+               FROM   stops s JOIN routes r ON r.id = $3
+               WHERE  s.id = $2
+               RETURNING id`,
+        [passengerId, row.stop_id, row.route_id],
+      );
+
+      if (historyResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "Could not record trip history — the stop or route no longer exists. Please contact support.",
+        });
+      }
+
+      await client.query("COMMIT");
+    } catch (txErr) {
+      await client.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     const countResult = await pool.query(
       `SELECT COUNT(id)::INTEGER AS total_waiting
@@ -1587,23 +1582,27 @@ setInterval(autoExpireWaiting, 60 * 1000);
 //  Uses PostGIS ST_DWithin + GIST index on stops.location for fast
 //  radius queries.  Radius clamped to 50 m � 5 km.
 // ================================================================
-const MAX_RADIUS_METRES     = 5000;
+const MAX_RADIUS_METRES = 5000;
 const DEFAULT_RADIUS_METRES = 1000;
-const DEFAULT_LIMIT         = 10;
-const WALK_SPEED_KMH        = 5; // used for walking-time estimate
+const DEFAULT_LIMIT = 10;
+const WALK_SPEED_KMH = 5; // used for walking-time estimate
 
 const getNearestStops = async (req, res) => {
   try {
     const { lat, lon } = req.query;
-    const rawRadius = req.query.radius != null ? Number(req.query.radius) : DEFAULT_RADIUS_METRES;
-    const rawLimit  = req.query.limit  != null ? Number(req.query.limit)  : DEFAULT_LIMIT;
+    const rawRadius =
+      req.query.radius != null
+        ? Number(req.query.radius)
+        : DEFAULT_RADIUS_METRES;
+    const rawLimit =
+      req.query.limit != null ? Number(req.query.limit) : DEFAULT_LIMIT;
 
     const coordError = validateCoordinates(lat, lon);
     if (coordError) {
       return res.status(400).json({ success: false, message: coordError });
     }
 
-    const latitude  = parseFloat(lat);
+    const latitude = parseFloat(lat);
     const longitude = parseFloat(lon);
 
     // Clamp radius to [50, MAX_RADIUS_METRES]
@@ -1631,7 +1630,7 @@ const getNearestStops = async (req, res) => {
            r.route_name,
            r.source,
            r.destination,
-           ROUND(${distanceExpression('s.location', '$1', '$2')}::NUMERIC, 0)::INTEGER
+           ROUND(${distanceExpression("s.location", "$1", "$2")}::NUMERIC, 0)::INTEGER
                                             AS distance_metres,
            COUNT(DISTINCT b.id)::INTEGER    AS active_buses,
            COUNT(DISTINCT pw.id)::INTEGER   AS waiting_count
@@ -1644,10 +1643,10 @@ const getNearestStops = async (req, res) => {
                ON  pw.stop_id  = s.id
               AND  pw.route_id = s.route_id
         WHERE  s.location IS NOT NULL
-          AND  ${dWithinExpression('s.location', '$1', '$2', '$3')}
+          AND  ${dWithinExpression("s.location", "$1", "$2", "$3")}
         GROUP  BY s.id, r.id,
-                  ${distanceExpression('s.location', '$1', '$2')}
-        ORDER  BY ${distanceExpression('s.location', '$1', '$2')} ASC
+                  ${distanceExpression("s.location", "$1", "$2")}
+        ORDER  BY ${distanceExpression("s.location", "$1", "$2")} ASC
         LIMIT  $4`,
       [latitude, longitude, radius, limit],
     );
@@ -1655,19 +1654,19 @@ const getNearestStops = async (req, res) => {
     const walkSpeedMperMin = (WALK_SPEED_KMH * 1000) / 60;
 
     const stops = result.rows.map((row) => ({
-      stop_id:         row.stop_id,
-      stop_name:       row.stop_name,
-      stop_order:      row.stop_order,
-      stop_lat:        row.stop_lat !== null ? parseFloat(row.stop_lat) : null,
-      stop_lon:        row.stop_lon !== null ? parseFloat(row.stop_lon) : null,
-      route_id:        row.route_id,
-      route_name:      row.route_name,
-      source:          row.source,
-      destination:     row.destination,
+      stop_id: row.stop_id,
+      stop_name: row.stop_name,
+      stop_order: row.stop_order,
+      stop_lat: row.stop_lat !== null ? parseFloat(row.stop_lat) : null,
+      stop_lon: row.stop_lon !== null ? parseFloat(row.stop_lon) : null,
+      route_id: row.route_id,
+      route_name: row.route_name,
+      source: row.source,
+      destination: row.destination,
       distance_metres: row.distance_metres,
-      walk_minutes:    Math.ceil(row.distance_metres / walkSpeedMperMin),
-      active_buses:    row.active_buses,
-      waiting_count:   row.waiting_count,
+      walk_minutes: Math.ceil(row.distance_metres / walkSpeedMperMin),
+      active_buses: row.active_buses,
+      waiting_count: row.waiting_count,
     }));
 
     res.status(200).json({
@@ -1682,20 +1681,19 @@ const getNearestStops = async (req, res) => {
   }
 };
 
-
 // ================================================================
 //  PASSENGER: QUICK SEARCH (by route name, bus number, or stop name)
 // ================================================================
 const quickSearch = async (req, res) => {
   try {
-    const q = (req.query.q || '').trim();
+    const q = (req.query.q || req.query.query || req.query.search || "").trim();
     if (!q || q.length < 2) {
       return res.status(400).json({
         success: false,
-        message: 'Search query must be at least 2 characters.',
+        message: "Search query must be at least 2 characters.",
       });
     }
-    const pattern = '%' + q + '%';
+    const pattern = "%" + q + "%";
     const result = await pool.query(
       `SELECT DISTINCT
               r.id          AS route_id,
@@ -1720,7 +1718,7 @@ const quickSearch = async (req, res) => {
          CASE WHEN r.route_name ILIKE $1 THEN 0 ELSE 1 END,
          r.route_name ASC
        LIMIT 20`,
-      [pattern]
+      [pattern],
     );
     res.status(200).json({
       success: true,
@@ -1729,7 +1727,7 @@ const quickSearch = async (req, res) => {
       results: result.rows,
     });
   } catch (error) {
-    safeErrorResponse(res, error, 'quickSearch');
+    safeErrorResponse(res, error, "quickSearch");
   }
 };
 

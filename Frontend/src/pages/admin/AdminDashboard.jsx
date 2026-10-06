@@ -7,7 +7,7 @@ import {
   TrendingUp, Clock, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { useAdminAuth } from '../../context/AdminAuthContext.jsx';
-import { socket } from '../../sockets/socket.js';
+import { socket, socketEvents } from '../../sockets/socket.js';
 import {
   getSystemStats, getAllBuses, getAllDrivers,
   getAllRoutes, getAllOwners, getWaitingOverview, getRouteById,
@@ -141,8 +141,8 @@ function LiveMapTab({ token, buses, setBuses, routes }) {
         )
       );
     };
-    socket.on('bus:location_updated', handler);
-    return () => socket.off('bus:location_updated', handler);
+    socket.on(socketEvents.bus.locationUpdated, handler);
+    return () => socket.off(socketEvents.bus.locationUpdated, handler);
   }, [setBuses]);
 
   const liveBuses = buses.filter((b) => b.latitude && b.longitude);
@@ -508,11 +508,14 @@ export default function AdminDashboard() {
     }
   }, [isAuthenticated, loadAll, loadWaiting]);
 
-  // Socket
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const onConnect    = () => { setConnected(true); socket.emit('join:admin'); };
+    const onConnect = () => {
+      setConnected(true);
+      if (token) socket.auth = { token };
+      socket.emit(socketEvents.admin.joinAdmin);
+    };
     const onDisconnect = () => setConnected(false);
 
     const onBusLocation = (data) => {
@@ -537,23 +540,23 @@ export default function AdminDashboard() {
 
     const onWaitingUpdated = () => loadWaiting();
 
-    socket.on('connect',              onConnect);
-    socket.on('disconnect',           onDisconnect);
-    socket.on('bus:location_updated', onBusLocation);
-    socket.on('trip:completed',       onTripCompleted);
-    socket.on('bus:route_assigned',   onRouteAssigned);
-    socket.on('waiting:updated',      onWaitingUpdated);
+    socket.on(socketEvents.connection.connect,    onConnect);
+    socket.on(socketEvents.connection.disconnect, onDisconnect);
+    socket.on(socketEvents.bus.locationUpdated,   onBusLocation);
+    socket.on(socketEvents.bus.tripCompleted,     onTripCompleted);
+    socket.on(socketEvents.bus.routeAssigned,     onRouteAssigned);
+    socket.on(socketEvents.bus.waitingUpdated,    onWaitingUpdated);
 
     if (!socket.connected) socket.connect();
     else onConnect();
 
     return () => {
-      socket.off('connect',              onConnect);
-      socket.off('disconnect',           onDisconnect);
-      socket.off('bus:location_updated', onBusLocation);
-      socket.off('trip:completed',       onTripCompleted);
-      socket.off('bus:route_assigned',   onRouteAssigned);
-      socket.off('waiting:updated',      onWaitingUpdated);
+      socket.off(socketEvents.connection.connect,    onConnect);
+      socket.off(socketEvents.connection.disconnect, onDisconnect);
+      socket.off(socketEvents.bus.locationUpdated,   onBusLocation);
+      socket.off(socketEvents.bus.tripCompleted,     onTripCompleted);
+      socket.off(socketEvents.bus.routeAssigned,     onRouteAssigned);
+      socket.off(socketEvents.bus.waitingUpdated,    onWaitingUpdated);
     };
   }, [isAuthenticated, loadAll, loadWaiting, showToast]);
 

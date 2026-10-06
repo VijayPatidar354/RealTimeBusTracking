@@ -233,25 +233,26 @@ const updateBusStatus = async (req, res) => {
       [status, busId, ownerId],
     );
 
+    const updatedBus = result.rows[0];
+
     if (status !== BUS_STATUSES.ACTIVE) {
-      etaService.clearBusState(bus.id);
+      etaService.clearBusState(updatedBus.id);
     }
 
-    const updatedBus = result.rows[0];
-    if (status !== BUS_STATUSES.ACTIVE && bus.route_id) {
+    if (status !== BUS_STATUSES.ACTIVE && updatedBus.route_id) {
       const waitingPassengers = await pool.query(
         `SELECT pw.id, pw.stop_id, s.stop_name
            FROM passenger_waiting pw
            JOIN stops s ON s.id = pw.stop_id
            WHERE pw.route_id = $1`,
-        [bus.route_id],
+        [updatedBus.route_id],
       );
       if (waitingPassengers.rows.length > 0) {
         getIO()
-          .to(`route:${bus.route_id}`)
+          .to(`route:${updatedBus.route_id}`)
           .emit("waiting:updated", {
             event: "waiting:updated",
-            route_id: bus.route_id,
+            route_id: updatedBus.route_id,
             bus_unavailable: true,
             bus_status: status,
             message: `Bus ${updatedBus.bus_number} is now ${status} — it will not reach remaining stops`,

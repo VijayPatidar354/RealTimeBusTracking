@@ -9,19 +9,21 @@ export default function WaitingRegistrationModal({
   onSubmit,        // receives the full stop object { id, stop_name, stop_order }
   loading,
 }) {
-  // Default to the searched source stop name
+  // Default to the searched source stop name — use stop id for unique selection
   const defaultStop = stops.find(
     (s) => s.stop_name?.toLowerCase() === selectedBus?.source_stop?.toLowerCase()
   ) || null;
 
-  const [selectedStop, setSelectedStop] = useState(defaultStop?.stop_name || "");
+  const [selectedStopId, setSelectedStopId] = useState(
+    defaultStop?.id ? String(defaultStop.id) : ""
+  );
 
   if (!open) return null;
 
   const handleSubmit = () => {
-    if (!selectedStop) return;
-    // Pass the full stop object — caller needs stop.id to call the API
-    const stopObj = stops.find((s) => s.stop_name === selectedStop);
+    if (!selectedStopId) return;
+    // Look up by unique stop id — not by name
+    const stopObj = stops.find((s) => String(s.id) === selectedStopId);
     if (!stopObj) return;
     onSubmit(stopObj);
   };
@@ -56,14 +58,13 @@ export default function WaitingRegistrationModal({
             </label>
 
             <select
-              value={selectedStop}
-              onChange={(e) => setSelectedStop(e.target.value)}
+              value={selectedStopId}
+              onChange={(e) => setSelectedStopId(e.target.value)}
               className="w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800"
             >
               <option value="">Choose stop</option>
               {stops.map((stop) => (
-                // key uses stop.id (unique DB id), value uses stop_name for matching
-                <option key={stop.id} value={stop.stop_name}>
+                <option key={stop.id} value={String(stop.id)}>
                   {stop.stop_name}
                 </option>
               ))}
@@ -80,7 +81,7 @@ export default function WaitingRegistrationModal({
           </button>
 
           <button
-            disabled={loading || !selectedStop}
+            disabled={loading || !selectedStopId}
             onClick={handleSubmit}
             className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
           >

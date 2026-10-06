@@ -68,13 +68,17 @@ const initSocket = (httpServer) => {
 
         // Passenger: join a route room to receive live bus updates (public)
         // emit: { routeId: 3 }
-        socket.on('join:route', (data = {}) => {
+        // Supports both canonical 'join:route' and alias 'passenger:join-route'
+        const handleJoinRoute = (data = {}) => {
             const { routeId } = data;
-            if (!routeId) return;   // 6. safe destructuring guard
+            if (!routeId) return;   // safe destructuring guard
             const room = `route:${routeId}`;
             socket.join(room);
             console.log(`[Socket] ${socket.id} joined ${room}`);
-        });
+        };
+
+        socket.on('join:route', handleJoinRoute);
+        socket.on('passenger:join-route', handleJoinRoute);
 
         // Driver: join their own private room
         // Requires a valid driver token carrying the matching id
@@ -101,13 +105,14 @@ const initSocket = (httpServer) => {
         // Requires a valid owner token carrying the matching ownerId
         // emit: { ownerId: 2 }
         socket.on('join:owner', (data = {}) => {
-            const { ownerId } = data;
-            if (!ownerId) return;   // 6. safe destructuring guard
+            const ownerId = data.ownerId || socket.user?.ownerId || socket.user?.id;
+            if (!ownerId) return;   // safe destructuring guard
 
-            // 12. Enforce: token must belong to this owner.
+            // Enforce: token must belong to this owner.
             // Same type-normalisation as join:driver — cast both sides to Number
             // before comparing so number/string mismatches never reject a valid owner.
-            if (!socket.user || Number(socket.user.ownerId) !== Number(ownerId)) {
+            const userOwnerId = socket.user?.ownerId || socket.user?.id;
+            if (!socket.user || Number(userOwnerId) !== Number(ownerId)) {
                 socket.emit('error', { message: 'Unauthorized: owner token required' });
                 return;
             }

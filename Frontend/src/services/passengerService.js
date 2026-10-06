@@ -146,18 +146,25 @@ export async function getMyTrips({ token, page = 1, limit = 20 }) {
  * Returns stops sorted by actual PostGIS distance (nearest first).
  *
  * @param {{ lat: number, lon: number, radius?: number, limit?: number }} params
+ * @param {RequestInit} [options]
  */
-export async function getNearestStops({ lat, lon, radius = 1000, limit = 10 }) {
+export async function getNearestStops({ lat, lon, radius = 1000, limit = 10 }, options = {}) {
   return request("/api/passenger/stops/nearest", {
     params: { lat, lon, radius, limit },
+    ...options,
   });
 }
 
 /**
  * Quick search across route names, bus numbers, and stop names.
- * @param {{ q: string }} params
+ * @param {string | { q?: string, query?: string }} queryOrParams
  */
-export async function quickSearch({ q }) {
+export async function quickSearch(queryOrParams) {
+  const q =
+    typeof queryOrParams === "string"
+      ? queryOrParams
+      : queryOrParams?.q || queryOrParams?.query || "";
+
   return request("/api/passenger/quick-search", {
     params: { q },
   });
