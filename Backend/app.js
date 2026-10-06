@@ -1,17 +1,21 @@
 require("dotenv").config();
 
 // ── 1. Validate required environment variables before anything else ──
-const REQUIRED_ENV = [
-  "JWT_SECRET",
-  "DB_USER",
-  "DB_HOST",
-  "DB_NAME",
-  "DB_PASSWORD",
-  "DB_PORT",
-  "BREVO_API_KEY",
-  "BREVO_SENDER_EMAIL",
-];
-const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
+const missingEnv = [];
+
+if (!process.env.JWT_SECRET) {
+  missingEnv.push("JWT_SECRET");
+}
+
+// Database: require either DATABASE_URL or individual DB_* variables
+if (!process.env.DATABASE_URL) {
+  const dbVars = ["DB_USER", "DB_HOST", "DB_NAME", "DB_PASSWORD", "DB_PORT"];
+  const missingDbVars = dbVars.filter((k) => !process.env[k]);
+  if (missingDbVars.length > 0) {
+    missingEnv.push(`DATABASE_URL (or ${missingDbVars.join(", ")})`);
+  }
+}
+
 if (missingEnv.length > 0) {
   console.error(
     `[Startup] Missing required environment variables: ${missingEnv.join(", ")}`,
