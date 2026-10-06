@@ -165,7 +165,7 @@ function initiateRegistration(role) {
 
             // ── Generate OTP ──
             const otpCode = generateOtp();
-            const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+            const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute
 
             // ── Upsert into pending_registrations ──
             await pool.query(
@@ -309,7 +309,7 @@ function resendOtp(role) {
             }
 
             const otpCode = generateOtp();
-            const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+            const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute
 
             await pool.query(
                 `UPDATE pending_registrations

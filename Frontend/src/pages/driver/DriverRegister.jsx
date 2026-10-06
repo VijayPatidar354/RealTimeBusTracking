@@ -21,7 +21,7 @@ function DriverRegister() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
-  const [timeLeft, setTimeLeft] = useState(300);
+  const [timeLeft, setTimeLeft] = useState(60);
   const [isTimerActive, setIsTimerActive] = useState(false);
 
   useEffect(() => {
@@ -40,7 +40,7 @@ function DriverRegister() {
   }, [isTimerActive, timeLeft]);
 
   const startTimer = () => {
-    setTimeLeft(300);
+    setTimeLeft(60);
     setIsTimerActive(true);
   };
 

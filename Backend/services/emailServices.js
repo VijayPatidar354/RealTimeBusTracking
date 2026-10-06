@@ -10,8 +10,8 @@ async function sendOtpEmail(toEmail, code) {
       sender: { email: process.env.BREVO_SENDER_EMAIL, name: "BusTrack" },
       to: [{ email: toEmail }],
       subject: "Your BusTrack verification code",
-      htmlContent: `<p>Your verification code is <b>${code}</b>. It expires in 5 minutes.</p>`,
-      textContent: `Your verification code is ${code}. It expires in 5 minutes.`,
+      htmlContent: `<p>Your verification code is <b>${code}</b>. It expires in 1 minute.</p>`,
+      textContent: `Your verification code is ${code}. It expires in 1 minute.`,
     });
 
     return { delivered: true, data: response };
