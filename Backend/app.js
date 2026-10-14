@@ -32,13 +32,45 @@ const { initSocket } = require("./socket");
 const app = express();
 const server = http.createServer(app);
 
-// ── 2. Test DB connection at startup ──────────────────────────────
+// ── 2. Test DB connection & auto-seed Admin at startup ──────────────
 const pool = require("./config/db");
+const bcrypt = require("bcryptjs");
+
 pool
   .connect()
-  .then((client) => {
+  .then(async (client) => {
     console.log("[DB] PostgreSQL connected successfully");
-    client.release();
+    try {
+      // Ensure admins table exists
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS admins (
+          id SERIAL PRIMARY KEY,
+          admin_name VARCHAR(100) NOT NULL,
+          email VARCHAR(150) NOT NULL UNIQUE,
+          password VARCHAR(255) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Ensure the admin account exists
+      const email = "bustracksystem.noreply@gmail.com";
+      const hashedPassword = await bcrypt.hash("admin123", 10);
+
+      await client.query(
+        `
+        INSERT INTO admins (admin_name, email, password)
+        VALUES ('Super Admin', $1, $2)
+        ON CONFLICT (email)
+        DO UPDATE SET password = EXCLUDED.password;
+        `,
+        [email, hashedPassword],
+      );
+      console.log(`[DB] Admin account ready: ${email} / admin123`);
+    } catch (seedErr) {
+      console.error("[DB] Auto-seed admin notice:", seedErr.message);
+    } finally {
+      client.release();
+    }
   })
   .catch((err) => {
     console.error("[DB] Connection failed:", err.message);
