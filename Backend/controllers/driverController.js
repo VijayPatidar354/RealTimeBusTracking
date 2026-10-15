@@ -135,26 +135,42 @@ const updateLocation = async (req, res) => {
     }
 
     const bus = busResult.rows[0];
-    if (bus.status !== BUS_STATUSES.ACTIVE) {
+    const busStatus = (bus.status || BUS_STATUSES.ACTIVE).toUpperCase();
+    if (busStatus !== BUS_STATUSES.ACTIVE) {
       etaService.clearBusState(bus.bus_id);
       return busNotActiveResponse(res, bus);
     }
 
-    // Update driver's coordinates and PostGIS point in one write.
-    const result = await pool.query(
-      `
-            UPDATE drivers
-            SET    latitude  = $1,
-                   longitude = $2,
-                   location  = ${pointFromLatLon}
-            WHERE  id = $3
-            RETURNING id, driver_name, latitude, longitude
-            `,
-      [latitude, longitude, driverId],
-    );
+    // Update driver's coordinates and PostGIS point in one write, with fallback if PostGIS is not available
+    let result;
+    try {
+      result = await pool.query(
+        `
+              UPDATE drivers
+              SET    latitude  = $1,
+                     longitude = $2,
+                     location  = ${pointFromLatLon}
+              WHERE  id = $3
+              RETURNING id, driver_name, latitude, longitude
+              `,
+        [latitude, longitude, driverId],
+      );
+    } catch (spatialErr) {
+      console.warn("[Driver] Spatial location update fallback without PostGIS:", spatialErr.message);
+      result = await pool.query(
+        `
+              UPDATE drivers
+              SET    latitude  = $1,
+                     longitude = $2
+              WHERE  id = $3
+              RETURNING id, driver_name, latitude, longitude
+              `,
+        [latitude, longitude, driverId],
+      );
+    }
 
     // Emit only if bus has an assigned route
-    if (bus.route_id && bus.status === "ACTIVE") {
+    if (bus.route_id && busStatus === BUS_STATUSES.ACTIVE) {
       // ── EVENT: bus:location_updated ───────────────────────
       // Room: route:{routeId}
       // Receivers: passengers tracking this route

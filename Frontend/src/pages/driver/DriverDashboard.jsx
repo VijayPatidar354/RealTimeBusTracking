@@ -478,8 +478,8 @@ export default function DriverDashboard() {
         setGpsError(false);
         try {
           await updateDriverLocation({ latitude, longitude, token });
-        } catch (_) {
-          /* silent */
+        } catch (err) {
+          console.error('[Driver GPS] Server update failed:', err);
         }
       },
       (err) => {

@@ -113,6 +113,14 @@ export async function assignRoute({ busId, route_id, token }) {
   });
 }
 
+export async function updateBusStatus({ busId, status, token }) {
+  return request(`/api/owner/buses/${busId}/status`, {
+    method:  'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body:    JSON.stringify({ status }),
+  });
+}
+
 // ── Routes ─────────────────────────────────────────────────────────
 export async function getMyRoutes(token) {
   return request('/api/owner/routes', {

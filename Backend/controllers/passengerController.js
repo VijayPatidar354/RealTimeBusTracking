@@ -966,8 +966,8 @@ const searchRoute = async (req, res) => {
              FROM routes r
              JOIN stops src ON src.route_id = r.id
              JOIN stops dst ON dst.route_id = r.id
-             WHERE src.stop_name ILIKE $1
-               AND dst.stop_name ILIKE $2
+             WHERE (src.stop_name ILIKE $1 OR r.source ILIKE $1)
+               AND (dst.stop_name ILIKE $2 OR r.destination ILIKE $2)
                AND src.stop_order < dst.stop_order
              ORDER BY r.id ASC`,
       [`%${from}%`, `%${to}%`],
@@ -993,11 +993,9 @@ const searchRoute = async (req, res) => {
                 COALESCE(b.current_speed_kmph, 30)::INTEGER AS current_speed_kmph,
                 d.id AS driver_id, d.latitude, d.longitude
          FROM   buses b
-         JOIN   drivers d ON b.driver_id = d.id
+         LEFT JOIN drivers d ON b.driver_id = d.id
          WHERE  b.route_id = ANY($1::int[])
-           AND  b.status = 'ACTIVE'
-           AND  d.latitude  IS NOT NULL
-           AND  d.longitude IS NOT NULL
+           AND  COALESCE(b.status, 'ACTIVE') = 'ACTIVE'
          ORDER BY b.id ASC`,
         [routeIds],
       ),
@@ -1045,29 +1043,38 @@ const searchRoute = async (req, res) => {
       const busesWithETA = [];
 
       for (const bus of routeBuses) {
-        const sourceETA = etaService.calculateETAFromStopsArray({
-          stops: routeStops,
-          busLatitude: parseFloat(bus.latitude),
-          busLongitude: parseFloat(bus.longitude),
-          targetStopOrder: route.source_order,
-        });
+        const hasCoords = bus.latitude != null && bus.longitude != null && !isNaN(parseFloat(bus.latitude)) && !isNaN(parseFloat(bus.longitude));
 
-        const destinationETA = etaService.calculateETAFromStopsArray({
-          stops: routeStops,
-          busLatitude: parseFloat(bus.latitude),
-          busLongitude: parseFloat(bus.longitude),
-          targetStopOrder: route.destination_order,
-        });
+        let sourceETA = { eta_minutes: null, distance_metres: 0 };
+        let destinationETA = { eta_minutes: null, distance_metres: 0 };
+
+        if (hasCoords) {
+          sourceETA = etaService.calculateETAFromStopsArray({
+            stops: routeStops,
+            busLatitude: parseFloat(bus.latitude),
+            busLongitude: parseFloat(bus.longitude),
+            targetStopOrder: route.source_order,
+          });
+
+          destinationETA = etaService.calculateETAFromStopsArray({
+            stops: routeStops,
+            busLatitude: parseFloat(bus.latitude),
+            busLongitude: parseFloat(bus.longitude),
+            targetStopOrder: route.destination_order,
+          });
+        }
 
         busesWithETA.push({
           bus_id: bus.bus_id,
           bus_number: bus.bus_number,
           bus_type: bus.bus_type,
           current_speed_kmph: bus.current_speed_kmph,
-          current_location: {
-            latitude: parseFloat(bus.latitude),
-            longitude: parseFloat(bus.longitude),
-          },
+          current_location: hasCoords
+            ? {
+                latitude: parseFloat(bus.latitude),
+                longitude: parseFloat(bus.longitude),
+              }
+            : null,
           eta_to_source_minutes: sourceETA.eta_minutes,
           eta_to_destination_minutes: destinationETA.eta_minutes,
         });

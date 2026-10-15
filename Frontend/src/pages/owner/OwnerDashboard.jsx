@@ -8,7 +8,7 @@ import {
 import { useOwnerAuth } from '../../context/OwnerAuthContext.jsx';
 import { socket, socketEvents } from '../../sockets/socket.js';
 import {
-  getMyBuses, createBus, assignDriver, assignRoute,
+  getMyBuses, createBus, assignDriver, assignRoute, updateBusStatus,
   getMyRoutes, getMyRouteById, createRoute, addStop,
 } from '../../services/ownerService.js';
 
@@ -295,6 +295,8 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
   const [createOpen,    setCreateOpen]    = useState(false);
   const [assignOpen,    setAssignOpen]    = useState(null);
   const [routeOpen,     setRouteOpen]     = useState(null);
+  const [statusOpen,    setStatusOpen]    = useState(null);
+  const [selectedStatus, setSelectedStatus] = useState('ACTIVE');
   const [mapBus,        setMapBus]        = useState(null);   // bus to show on map
   const [busNumber,     setBusNumber]     = useState('');
   const [busType,       setBusType]       = useState('AC');
@@ -390,6 +392,16 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
     finally { setSaving(false); }
   };
 
+  const handleUpdateStatus = async (e) => {
+    e.preventDefault(); if (!statusOpen) return; setSaving(true);
+    try {
+      await updateBusStatus({ busId: statusOpen.bus_id, status: selectedStatus, token });
+      showToast(`Bus ${statusOpen.bus_number} status updated to ${selectedStatus}`, 'success');
+      setStatusOpen(null); load();
+    } catch (err) { showToast(err.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="space-y-4">
       <SectionHeader
@@ -417,13 +429,18 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
                     <p className="font-semibold text-ink-950 dark:text-white">{bus.bus_number}</p>
                     <div className="mt-0.5 flex items-center gap-2">
                       <p className="text-xs text-ink-500">{bus.bus_type}</p>
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                        bus.status === 'ACTIVE'      ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400' :
-                        bus.status === 'MAINTENANCE' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' :
-                        bus.status === 'INACTIVE'    ? 'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400' :
-                        bus.status === 'RETIRED'     ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' :
-                                                       'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400'
-                      }`}>
+                      <button
+                        type="button"
+                        onClick={() => { setStatusOpen(bus); setSelectedStatus(bus.status || 'ACTIVE'); }}
+                        title="Click to change bus status"
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide transition hover:opacity-80 cursor-pointer ${
+                          bus.status === 'ACTIVE'      ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400' :
+                          bus.status === 'MAINTENANCE' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' :
+                          bus.status === 'INACTIVE'    ? 'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400' :
+                          bus.status === 'RETIRED'     ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' :
+                                                         'bg-ink-100 text-ink-500 dark:bg-white/10 dark:text-ink-400'
+                        }`}
+                      >
                         <span className={`h-1.5 w-1.5 rounded-full ${
                           bus.status === 'ACTIVE'      ? 'bg-green-500' :
                           bus.status === 'MAINTENANCE' ? 'bg-amber-500' :
@@ -432,7 +449,8 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
                                                          'bg-ink-400'
                         }`} />
                         {bus.status || 'UNKNOWN'}
-                      </span>
+                        <ChevronDown className="h-2.5 w-2.5 ml-0.5 opacity-60" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -467,7 +485,10 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
               </div>
 
               {/* Actions */}
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <Btn variant="secondary" onClick={() => { setStatusOpen(bus); setSelectedStatus(bus.status || 'ACTIVE'); }} className="flex-1 justify-center">
+                  Status
+                </Btn>
                 <Btn variant="secondary" onClick={() => { setAssignOpen(bus); setDriverId(''); }} className="flex-1 justify-center">
                   <Users className="h-3.5 w-3.5" /> Driver
                 </Btn>
@@ -485,6 +506,25 @@ function BusesSection({ token, routes, showToast, onBusesLoaded }) {
 
       {/* Bus map modal */}
       <BusMapModal open={!!mapBus} bus={mapBus} onClose={() => setMapBus(null)} />
+
+      {/* Update bus status modal */}
+      <Modal open={!!statusOpen} title={`Update Status — ${statusOpen?.bus_number}`} onClose={() => setStatusOpen(null)}>
+        <form onSubmit={handleUpdateStatus} className="space-y-4">
+          <Select label="Bus Status" value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} required>
+            <option value="ACTIVE">ACTIVE (In Service)</option>
+            <option value="MAINTENANCE">MAINTENANCE (Under Repair / Servicing)</option>
+            <option value="INACTIVE">INACTIVE (Off Duty / Idle)</option>
+            <option value="RETIRED">RETIRED (Dismantled / Decommissioned)</option>
+          </Select>
+          <p className="text-xs text-ink-400">
+            Setting status to Inactive, Maintenance, or Retired will clear active ETAs and notify any waiting passengers.
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <Btn variant="secondary" type="button" onClick={() => setStatusOpen(null)}>Cancel</Btn>
+            <Btn type="submit" loading={saving}>Save Status</Btn>
+          </div>
+        </form>
+      </Modal>
 
       {/* Create bus modal */}
       <Modal open={createOpen} title="Add New Bus" onClose={() => setCreateOpen(false)}>
