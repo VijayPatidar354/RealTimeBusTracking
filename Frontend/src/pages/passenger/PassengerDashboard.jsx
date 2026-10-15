@@ -979,11 +979,28 @@ function PassengerDashboard() {
               passengerCoords={activeTab === TAB_NEAREST ? passengerCoords : undefined}
             />
           ) : (
-            <EmptyState
-              icon={MapPinned}
-              title="Map waiting for route data"
-              description="Search a route or switch to Nearest Stops to see the live map."
-            />
+            <div className="space-y-3">
+              <div
+                className="hidden xl:flex items-center justify-between gap-3 invisible select-none"
+                aria-hidden="true"
+              >
+                <div>
+                  <h3 className="text-base font-semibold">
+                    Route results
+                  </h3>
+                  <p className="text-sm">
+                    {hasSearched
+                      ? "Select any available bus to focus it on the live map."
+                      : "Start with a source and destination."}
+                  </p>
+                </div>
+              </div>
+              <EmptyState
+                icon={MapPinned}
+                title="Map waiting for route data"
+                description="Search a route or switch to Nearest Stops to see the live map."
+              />
+            </div>
           )}
         </div>
       </div>
